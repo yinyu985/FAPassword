@@ -135,7 +135,14 @@ function withTimeout(promise, ms, label) {
 
 // defeat the MV3 ~30s idle shutdown that kills the session
 const KEEPALIVE_ALARM = "fapassword-keepalive";
-chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.4 }); // ~24s
+chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 }).catch((error) => {
+  // Reloading the extension can destroy this worker while alarm creation is
+  // still in flight. Chromium rejects that stale request with "No SW"; it is
+  // expected teardown noise, not an extension failure.
+  if (!/No SW|context invalidated/i.test(String(error))) {
+    console.warn("[FAPassword] failed to create keepalive alarm", error);
+  }
+});
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name !== KEEPALIVE_ALARM) return;
   // touching an extension API resets the idle timer
