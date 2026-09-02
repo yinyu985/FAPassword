@@ -133,6 +133,13 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+function normalizePin(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+}
+
 // defeat the MV3 ~30s idle shutdown that kills the session
 const KEEPALIVE_ALARM = "fapassword-keepalive";
 chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 }).catch((error) => {
@@ -373,10 +380,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         case "verifyPin": {
           if (fromContent && sender.frameId !== 0) return sendResponse({ ok: false, error: "forbidden" });
+          const pin = normalizePin(msg.pin);
+          if (pin.length !== 6) return sendResponse({ ok: false, error: "Enter all 6 digits" });
           await ensureConnected();
           try {
             // cap so a non-responding helper cant leave the inline PIN box stuck
-            await withTimeout(client.verifyPin(msg.pin), 8000, "verification timed out");
+            await withTimeout(client.verifyPin(pin), 8000, "verification timed out");
           } catch (e) {
             // a spent challenge cant be retried - put a fresh code on the Mac and tell the UI
             // to ask for THAT one, or the user retypes a dead code forever

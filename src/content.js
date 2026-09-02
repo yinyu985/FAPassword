@@ -5,6 +5,13 @@ console.log("[FAPassword] content script v0.46.0 loaded");
 const OTP_AUTOCOMPLETE = /one-time-code/i;
 const OTP_HINT = /\b(otp|one[\s-]?time|verification|2fa|mfa|sms[\s-]?code|auth[\s-]?code|security[\s-]?code|passcode)\b/i;
 
+function normalizePin(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+}
+
 function attrBlob(el) {
   // read the wrapping <label>/aria-labelledby too - snapchat's web login leaves the input bare and labels it there
   let labelText = "";
@@ -514,8 +521,9 @@ async function buildLockedSuggestion(field, onUnlock) {
   let verifying = false;
   const doVerify = async () => {
     if (verifying) return;
-    const pin = input.value.trim();
-    if (pin.length < 4) return;
+    const pin = normalizePin(input.value);
+    input.value = pin;
+    if (pin.length !== 6) return;
     verifying = true;
     setStatus("Verifying...", false);
     let res;
@@ -562,9 +570,20 @@ async function buildLockedSuggestion(field, onUnlock) {
     if (!e.isTrusted) return; // ignore page-synthesized events
     if (e.key === "Enter") doVerify();
   });
+  input.addEventListener("paste", (e) => {
+    if (!e.isTrusted) return;
+    const text = e.clipboardData?.getData("text");
+    if (text == null) return;
+    // Clean OCR formatting before the six-character maxlength is applied.
+    e.preventDefault();
+    input.value = normalizePin(text);
+    if (input.value.length === 6) doVerify();
+  });
   // auto-submit as soon as all 6 digits are in, like apple - no Enter needed
   input.addEventListener("input", () => {
-    if (input.value.trim().length === 6) doVerify();
+    const pin = normalizePin(input.value);
+    if (input.value !== pin) input.value = pin;
+    if (pin.length === 6) doVerify();
   });
 
   setTimeout(() => input.focus(), 0);

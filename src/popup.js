@@ -8,6 +8,14 @@ const dot = document.getElementById("dot");
 const pinInput = document.getElementById("pin");
 const pinError = document.getElementById("pin-error");
 const refreshBtn = document.getElementById("refresh");
+const verifyBtn = document.getElementById("verify");
+
+function normalizePin(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+}
 
 function show(name) {
   for (const [k, el] of Object.entries(views)) el.hidden = k !== name;
@@ -226,11 +234,19 @@ async function renderLogins() {
   }
 }
 
-document.getElementById("verify").addEventListener("click", async () => {
+let verifyingPin = false;
+
+async function verifyPin() {
+  if (verifyingPin) return;
   pinError.hidden = true;
-  const pin = pinInput.value.trim();
-  if (pin.length < 4) return;
+  const pin = normalizePin(pinInput.value);
+  pinInput.value = pin;
+  if (pin.length !== 6) return;
+  verifyingPin = true;
+  verifyBtn.disabled = true;
   const res = await send({ type: "verifyPin", pin });
+  verifyingPin = false;
+  verifyBtn.disabled = false;
   if (res?.ok) render(res.state);
   else {
     // a failed attempt spends the code, so the background put a fresh one on the Mac
@@ -240,14 +256,27 @@ document.getElementById("verify").addEventListener("click", async () => {
     pinInput.value = "";
     pinInput.focus();
   }
-});
+}
+
+verifyBtn.addEventListener("click", verifyPin);
 
 pinInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") document.getElementById("verify").click();
+  if (e.key === "Enter") verifyPin();
+});
+pinInput.addEventListener("paste", (e) => {
+  const text = e.clipboardData?.getData("text");
+  if (text == null) return;
+  // Normalize before maxlength can truncate formatted OCR text such as
+  // "123 456" or a value with a trailing newline/invisible character.
+  e.preventDefault();
+  pinInput.value = normalizePin(text);
+  if (pinInput.value.length === 6) verifyPin();
 });
 // auto-submit once all 6 digits are in, like apple - no Enter needed
 pinInput.addEventListener("input", () => {
-  if (pinInput.value.trim().length === 6) document.getElementById("verify").click();
+  const pin = normalizePin(pinInput.value);
+  if (pinInput.value !== pin) pinInput.value = pin;
+  if (pin.length === 6) verifyPin();
 });
 
 let noteTimer = null;
