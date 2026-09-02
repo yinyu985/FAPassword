@@ -76,7 +76,7 @@ git clone https://github.com/yinyu985/FAPassword.git
 
 1. disable Apple's official iCloud Passwords extension (it claims the same ID)
 2. open `chrome://extensions` and turn on Developer mode (top right)
-3. click Load unpacked and pick the `fapassword` folder
+3. click Load unpacked and pick the `FAPassword` folder
 4. confirm the ID reads `pejdijmoenmkgeppbflobdenhhabjlaj`
 5. click the toolbar icon, type the 6-digit code your Mac shows, done
 6. go to a site with a saved login and fill it

@@ -76,7 +76,7 @@ git clone https://github.com/yinyu985/FAPassword.git
 
 1. 禁用 Apple 官方 iCloud Passwords 扩展（它占用同一个 ID）
 2. 打开 `chrome://extensions`，开启右上角开发者模式
-3. 点击"加载已解压的扩展程序"，选择 `fapassword` 文件夹
+3. 点击“加载已解压的扩展程序”，选择 `FAPassword` 文件夹
 4. 确认扩展 ID 是 `pejdijmoenmkgeppbflobdenhhabjlaj`
 5. 点击工具栏图标，输入你 Mac 上显示的六位码，完成
 6. 打开一个有已保存登录信息的网站，填充
