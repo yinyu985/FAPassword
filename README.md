@@ -1,4 +1,8 @@
 <p align="center">
+  <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <img src="icons/icon128.png" width="96" height="96" alt="FAPassword logo">
 </p>
 
