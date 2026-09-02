@@ -12,7 +12,7 @@ ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 1
 const page = await ctx.newPage();
 await page.goto(`${BASE}/testbench.html`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(300);
-const box = () => page.locator('[data-open-passwords="suggestions"]');
+const box = () => page.locator('[data-fapassword="suggestions"]');
 const results = [];
 const ok = (n, c) => { results.push(c); console.log((c ? "PASS " : "FAIL ") + n); };
 // fill card1 to reach the "already logged in" state the user hit

@@ -1,6 +1,6 @@
 // fills credentials into the page on request from popup. never treats OTP inputs
 // as fillable login fields - that misclassification is apple's balloon-on-every-OTP bug
-console.log("[Open Passwords] content script v0.46.0 loaded");
+console.log("[FAPassword] content script v0.46.0 loaded");
 
 const OTP_AUTOCOMPLETE = /one-time-code/i;
 const OTP_HINT = /\b(otp|one[\s-]?time|verification|2fa|mfa|sms[\s-]?code|auth[\s-]?code|security[\s-]?code|passcode)\b/i;
@@ -419,16 +419,16 @@ function buildSuggestionBox(field) {
   ensureFontFace();
   anchorField = field;
   const box = document.createElement("div");
-  box.setAttribute("data-open-passwords", "suggestions");
+  box.setAttribute("data-fapassword", "suggestions");
   box.setAttribute("role", "listbox");
-  box.setAttribute("aria-label", "Open Passwords suggestions");
+  box.setAttribute("aria-label", "FAPassword suggestions");
   glassify(box);
   Object.assign(box.style, {
     position: "absolute",
     zIndex: "2147483647",
   });
   const header = document.createElement("div");
-  header.textContent = "Open Passwords";
+  header.textContent = "FAPassword";
   Object.assign(header.style, {
     padding: "7px 12px",
     fontSize: "11px",
@@ -994,7 +994,7 @@ async function maybeOfferSave(scope) {
     lastAutofill.password === cred.password &&
     Date.now() - lastAutofill.at < 300000
   ) {
-    console.debug("[Open Passwords] save skipped: recently autofilled");
+    console.debug("[FAPassword] save skipped: recently autofilled");
     return;
   }
 
@@ -1014,7 +1014,7 @@ async function maybeOfferSave(scope) {
     pwInputs.some((p) => (p.getAttribute("autocomplete") || "").toLowerCase().includes("new-password"));
 
   // fire and forget - awaiting would let a navigating submit kill us; locked saves get stashed and flushed on unlock
-  console.debug("[Open Passwords] handing save to background", {
+  console.debug("[FAPassword] handing save to background", {
     host: location.hostname,
     user: cred.username || "(none)",
     generated,

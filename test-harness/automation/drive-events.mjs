@@ -15,7 +15,7 @@ await page.evaluate(()=>{
   }
 });
 await page.waitForTimeout(200);
-const box=()=>page.locator('[data-open-passwords="suggestions"]');
+const box=()=>page.locator('[data-fapassword="suggestions"]');
 await page.focus('input[name=username]'); await page.waitForTimeout(400);
 await box().locator("text=Click to autofill").click(); await page.waitForTimeout(600);
 const ev=await page.evaluate(()=>window.__ev);

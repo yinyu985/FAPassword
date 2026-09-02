@@ -5,7 +5,7 @@ const EXT = process.env.OP_EXT || fileURLToPath(new URL("./.builds/multi", impor
 const ctx=await chromium.launchPersistentContext("/tmp/op-multi-"+Date.now(),{headless:false,args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`,"--headless=new","--no-first-run"]});
 ctx.serviceWorkers()[0]||await ctx.waitForEvent("serviceworker",{timeout:10000}).catch(()=>null);
 const page=await ctx.newPage(); await page.goto("http://127.0.0.1:8799/login-standard.html",{waitUntil:"domcontentloaded"}); await page.waitForTimeout(300);
-const box=()=>page.locator('[data-open-passwords="suggestions"]');
+const box=()=>page.locator('[data-fapassword="suggestions"]');
 await page.focus('input[name="username"]'); await page.waitForTimeout(400);
 await box().locator("text=Click to autofill").click(); await page.waitForTimeout(500);
 const t=(await box().count())?(await box().innerText()).replace(/\s+/g," "):"";

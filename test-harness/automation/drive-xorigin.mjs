@@ -34,7 +34,7 @@ await xframe
   .focus()
   .catch(() => {});
 await page.waitForTimeout(700);
-const dd = await xframe.locator('[data-open-passwords="suggestions"]').count();
+const dd = await xframe.locator('[data-fapassword="suggestions"]').count();
 const pass = dd === 0;
 console.log(pass ? "PASS cross-origin iframe shows NO offer (leak closed)" : `FAIL cross-origin iframe got an offer (${dd})`);
 await ctx.close();

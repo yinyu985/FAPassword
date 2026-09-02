@@ -1,5 +1,5 @@
 {
-  "name": "open-passwords-extension",
+  "name": "fapassword-extension",
   "private": true,
   "type": "module",
   "scripts": {

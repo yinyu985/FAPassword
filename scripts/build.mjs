@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = join(root, "manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const artifactName = `open-passwords-${manifest.version}`;
+const artifactName = `fapassword-${manifest.version}`;
 const distDir = join(root, "dist");
 const artifactDir = join(distDir, artifactName);
 const zipPath = join(distDir, `${artifactName}.zip`);

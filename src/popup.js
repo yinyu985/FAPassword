@@ -64,7 +64,7 @@ const policyNote = document.getElementById("policy-note");
 function policyMsg(action) {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage("com.openpasswords.policy", { action }, (resp) => {
+      chrome.runtime.sendNativeMessage("com.fapassword.policy", { action }, (resp) => {
         if (chrome.runtime.lastError) resolve({ error: chrome.runtime.lastError.message });
         else resolve(resp || { error: "no reply" });
       });

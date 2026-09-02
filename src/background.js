@@ -134,7 +134,7 @@ function withTimeout(promise, ms, label) {
 }
 
 // defeat the MV3 ~30s idle shutdown that kills the session
-const KEEPALIVE_ALARM = "open-passwords-keepalive";
+const KEEPALIVE_ALARM = "fapassword-keepalive";
 chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.4 }); // ~24s
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name !== KEEPALIVE_ALARM) return;
@@ -330,7 +330,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               .filter(Boolean);
           } catch {}
           const target = pickSaveTarget({ host, existing, detected, generated, newPwCtx });
-          console.debug("[Open Passwords] resolveSave", {
+          console.debug("[FAPassword] resolveSave", {
             host,
             detected: detected || "(none)",
             generated,

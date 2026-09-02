@@ -43,7 +43,7 @@ function run(file) {
 
 let passed = 0;
 const failures = [];
-console.log("Running Open Passwords headless suite\n" + "=".repeat(50));
+console.log("Running FAPassword headless suite\n" + "=".repeat(50));
 for (const [name, file] of DRIVERS) {
   process.stdout.write(`\n▶ ${name}\n`);
   const { code, out } = await run(file);

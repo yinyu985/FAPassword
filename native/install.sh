@@ -8,11 +8,11 @@ SUPPORT="$HOME/Library/Application Support"
 
 # copy the helper OUTSIDE the repo so moving it wont break the host path, and out of
 # ~/Downloads where TCC can stop the browser launching it. Application Support has no gate
-APPDIR="$SUPPORT/OpenPasswords"
+APPDIR="$SUPPORT/FAPassword"
 mkdir -p "$APPDIR"
-cp "$DIR/openpasswords-policy.py" "$APPDIR/openpasswords-policy.py"
-chmod +x "$APPDIR/openpasswords-policy.py"
-HELPER="$APPDIR/openpasswords-policy.py"
+cp "$DIR/fapassword-policy.py" "$APPDIR/fapassword-policy.py"
+chmod +x "$APPDIR/fapassword-policy.py"
+HELPER="$APPDIR/fapassword-policy.py"
 
 # collect the support dir of every installed chromium browser: a fixed set for chrome/edge/
 # chromium, and every BraveSoftware/* variant (Brave-Browser, Brave-Origin, -Beta, ...)
@@ -20,10 +20,10 @@ found=0
 register() {
   d="$1/NativeMessagingHosts"
   mkdir -p "$d"
-  cat > "$d/com.openpasswords.policy.json" <<EOF
+  cat > "$d/com.fapassword.policy.json" <<EOF
 {
-  "name": "com.openpasswords.policy",
-  "description": "Open Passwords policy helper",
+  "name": "com.fapassword.policy",
+  "description": "FAPassword policy helper",
   "path": "$HELPER",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://$EXT_ID/"]
