@@ -1,0 +1,9 @@
+node_modules/
+*.zip
+.DS_Store
+*.pem
+*.crx
+
+# python bytecode
+__pycache__/
+*.pyc
