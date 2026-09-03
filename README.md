@@ -20,6 +20,12 @@ It speaks the same native-messaging protocol Apple's extension uses (`com.apple.
 
 It connects to the live vault, prompts for the PIN once, lists the logins for the current site, and fills them.
 
+## Paste-friendly PIN entry
+
+The 6-digit code box accepts a **direct paste**. When your Mac shows the code, grab it with a screen OCR and paste whatever comes out — spaces, dashes, line breaks, full-width digits and stray glyphs are all filtered down to the six digits, and verification starts the moment all six are in. No hunting for keys, no hand-untangling a mangled OCR string.
+
+As long as the OCR got six digits right, pasting `123 456`, `1234 56` or `123.456` all verify as `123456` — you never have to type the code by hand.
+
 ## What it fixes
 
 | The complaint about Apple's extension | What this does |
