@@ -12,7 +12,7 @@ import subprocess
 import sys
 import uuid
 
-# chrome + brave variants (Origin/Beta/Nightly/Dev) + edge/chromium
+# Chrome + Brave variants, Edge, Chromium, and Helium.
 BUNDLES = [
     "com.google.Chrome",
     "com.google.Chrome.beta",
@@ -25,6 +25,7 @@ BUNDLES = [
     "com.brave.Browser.dev",
     "com.microsoft.EdgeMac",
     "org.chromium.Chromium",
+    "net.imput.helium",
 ]
 KEY = "PasswordManagerEnabled"
 APPDIR = os.path.expanduser("~/Library/Application Support/FAPassword")
@@ -65,7 +66,7 @@ def write_profile():
     profile = {
         "PayloadType": "Configuration",
         "PayloadDisplayName": "FAPassword - Hide Browser Password Manager",
-        "PayloadDescription": "Disables the built-in password manager in Chrome/Brave.",
+        "PayloadDescription": "Disables the built-in password manager in supported Chromium browsers.",
         "PayloadIdentifier": "com.fapassword.hidepm",
         "PayloadUUID": "1D8B2E90-0000-4000-A000-4F70656E5057",
         "PayloadVersion": 1,

@@ -9,7 +9,7 @@
 <h1 align="center">FAPassword</h1>
 
 <p align="center">
-  一个 Chrome/Edge 扩展，在 macOS 上与 Apple Passwords（iCloud 钥匙串）对话并自动填充你的登录信息，但没有官方扩展的那些毛病。
+  一个 Chromium 扩展，在 macOS 上与 Apple Passwords（iCloud 钥匙串）通信并自动填充登录信息。
 </p>
 
 ---
@@ -30,7 +30,7 @@ Apple 官方 iCloud Passwords 扩展在 Chrome 上只有 2.3/5 分（约 2,600 �
 
 | 对 Apple 扩展的抱怨 | 本扩展的做法 |
 |---|---|
-| 每次重启都要重新输六位码，有时每隔几小时一次 | 通过 keep-alive 定时器维持 MV3 worker 和会话存活，每个真实会话只输一次码（[background.js](src/background.js)） |
+| 每次重启都要重新输六位码，有时每隔几小时一次 | 活跃的原生消息端口会维持 MV3 worker 和会话；真正断连时会立即清理并允许重连（[protocol.js](src/protocol.js)） |
 | 每个输入框（包括 OTP 框）都弹 "Enable AutoFill" 气泡 | 内联下拉框只出现在真正的登录字段上，从不出现一次性验证码框（[content.js](src/content.js)） |
 | 100% CPU / 输入卡顿 | 内容脚本不做任何逐键操作，只在聚焦登录字段时才响应 |
 | 悬停时重新下载每张图片扫描二维码 | 完全没有图片或二维码扫描 |
@@ -71,7 +71,7 @@ macOS 15.4+ 读取实时保险库，要么用 Apple 的原生助手（要求 App
 ## 系统要求
 
 - macOS 14（Sonoma）或更新，已登录 iCloud 并开启 Passwords
-- Chrome 或 Edge
+- Chrome、Edge、Chromium、Brave 或 Helium（Apple 原生助手是否接受取决于 macOS 与浏览器版本）
 - 已移除或禁用 Apple 官方 iCloud Passwords 扩展
 
 ## 安装
@@ -95,7 +95,7 @@ git clone https://github.com/yinyu985/FAPassword.git
 ./native/install.sh   # 注册一个极小的原生助手，仅 macOS
 ```
 
-然后完全退出并重新打开浏览器（`Cmd+Q`）。弹窗中的 **Hide browser password manager entirely** 开关现在生效了；它会为你拥有的每个 Chromium 浏览器设置 `PasswordManagerEnabled=false`。随时用 `./native/uninstall.sh` 撤销。该助手只运行三条固定的 `defaults` 命令，且只接受本扩展 ID 发来的消息。
+然后完全退出并重新打开浏览器（`Cmd+Q`）。弹窗中的 **Hide browser password manager entirely** 开关会生成 macOS 配置描述文件并打开，等待你批准。助手只接受本扩展 ID 的消息，并且只会打开该描述文件或系统设置中的描述文件页面。`./native/uninstall.sh` 只移除助手注册；已安装的描述文件必须由你在系统设置中移除。
 
 ## 工作原理
 
@@ -103,7 +103,7 @@ git clone https://github.com/yinyu985/FAPassword.git
 popup.js / content.js
         │  runtime 消息
         ▼
-background.js  ──  keep-alive 定时器维持会话
+background.js  ──  管理原生端口，及时拒绝断连后的旧请求
         │
         ▼
 protocol.js  ──  chrome.runtime.connectNative("com.apple.passwordmanager")
@@ -131,12 +131,32 @@ PasswordManagerBrowserExtensionHelper（macOS 原生，对接 iCloud 钥匙串�
 
 验证码 3 分钟后过期。之后扩展会向 Mac 索要新验证码，而不是去校验旧码。
 
+### Touch ID 提示后，填充一直没有响应
+
+密码读取最长等待 2 分钟。如果 Apple 助手既不回复也不断开，FAPassword 会关闭这条无法
+确认响应归属的原生连接，避免迟到的响应被错配给下一次请求。再次选择账号即可重连；若反复
+发生，请完全退出浏览器后重新打开。
+
+### 同时启用 Apple 官方扩展后行为异常
+
+不要同时启用两个扩展。原生助手要求 Apple 接受的扩展身份，两者会在集成边界发生冲突，
+并可能争抢系统提示和页面字段。
+
 ## 安全说明
 
 - 会话密钥只存在 worker 内存中，从不写入磁盘
 - 每次密码查询都通过 AES-GCM 与助手端到端加密
 - PIN 只用于派生 SRP 共享密钥，不存储
+- PIN 只在扩展弹窗中输入；账号建议放在网页不可读取的 closed Shadow DOM 中
+- 密码填充绑定精确 frame 与 origin；除本地开发地址外拒绝非 HTTPS 页面
 - 读取密码可能触发 Touch ID 提示，那是助手的动作，不是本扩展
+
+## 开发与验证
+
+`npm run check` 检查 JavaScript、Shell/Python 语法、本地化和 manifest 资源；
+`npm test` 运行无需第三方依赖的协议与密码学回归测试；`npm run build` 在 `dist/`
+下只生成一个干净且可复现的目录，加载该目录即可安装未打包扩展。可选浏览器自动化见
+[`test-harness/automation/README.md`](test-harness/automation/README.md)，它不会自动下载浏览器。
 
 ## 致谢
 

@@ -19,6 +19,7 @@ import {
 const NATIVE_HOST = "com.apple.passwordmanager";
 const BROWSER_NAME = "Chrome";
 const VERSION = "1.0";
+const PASSWORD_READ_TIMEOUT_MS = 2 * 60_000;
 // how long we still trust a code the Mac put on screen. past this we re-prompt rather than
 // verify against a challenge the user has probably lost track of
 const CHALLENGE_TTL_MS = 3 * 60_000;
@@ -67,9 +68,31 @@ export class ApplePasswords {
     this._challengeAt = 0; // when the current code went up on the Mac
     this._challengeGen = 0; // bumped per challenge, so a queued verify can spot a stale one
     this._challengePending = undefined; // in-flight requestChallenge, shared by callers
+    this._connectPending = undefined; // all callers await the same capabilities negotiation
     // native protocol echoes the same cmd on replies with no correlation id, so two
     // in-flight requests with the same cmd collide. serialize all exchanges here
     this._lock = Promise.resolve();
+  }
+
+  _rejectWaiters(error = new Error("connection closed")) {
+    for (const waiter of this._waiters.values()) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    this._waiters.clear();
+  }
+
+  _dropConnection(port, state = State.Disconnected, error = new Error("connection closed")) {
+    // Ignore a late disconnect event from a port that has already been replaced.
+    if (port && port !== this.port) return;
+    this.port = undefined;
+    this.session = undefined;
+    this.capabilities = undefined;
+    this._challengeAt = 0;
+    this._challengePending = undefined;
+    this._challengeGen++;
+    this._rejectWaiters(error);
+    this._setState(state);
   }
 
   _withLock(fn) {
@@ -138,16 +161,31 @@ export class ApplePasswords {
     }
     // unsolicited session-invalidation signals from the helper
     if (message.cmd === Command.PASSWORDS_DISABLED || message.cmd === Command.RELOGIN_NEEDED) {
-      this.session = undefined;
+      this.session = new SRPSession(this.capabilities?.shouldUseBase64);
+      this._challengeAt = 0;
+      this._challengeGen++;
       this._setState(State.NeedsPin);
     }
   }
 
   // does NOT reset an existing unlocked session (core fix vs Apple's extension,
   // which re-pairs on every connect)
-  async connect() {
-    if (this.port) return;
-    return new Promise((resolve, reject) => {
+  connect() {
+    if (this.ready || (this.port && this.session)) return Promise.resolve();
+    if (this._connectPending) return this._connectPending;
+
+    // A port without a session and without an in-flight negotiation is unusable. This
+    // should not normally survive _dropConnection(), but recovering here avoids recreating
+    // the historical half-connected state if Chromium delivers an unusual callback order.
+    if (this.port) {
+      const stale = this.port;
+      try {
+        stale.disconnect();
+      } catch (_) {}
+      this._dropConnection(stale);
+    }
+
+    const pending = new Promise((resolve, reject) => {
       let port;
       try {
         port = chrome.runtime.connectNative(NATIVE_HOST);
@@ -159,12 +197,9 @@ export class ApplePasswords {
 
       port.onMessage.addListener((msg) => this._dispatch(msg));
       port.onDisconnect.addListener(() => {
-        const err = chrome.runtime.lastError?.message;
-        this.port = undefined;
-        // session key lives only in memory, dropped port means we must re-pair
-        this.session = undefined;
-        if (err && /not found|forbidden|host/i.test(err)) this._setState(State.NoHelper);
-        else this._setState(State.Disconnected);
+        const message = chrome.runtime.lastError?.message || "native helper disconnected";
+        const state = /not found|forbidden|host/i.test(message) ? State.NoHelper : State.Disconnected;
+        this._dropConnection(port, state, new Error(message));
       });
 
       this._send(Command.GET_CAPABILITIES)
@@ -177,14 +212,29 @@ export class ApplePasswords {
             this.capabilities.secretSessionVersion !== undefined &&
             this.capabilities.secretSessionVersion !== SecretSessionVersion.SRPWithRFCVerification
           ) {
-            return reject(new Error("unsupported capabilities (expected SRP RFC verification)"));
+            throw new Error("unsupported capabilities (expected SRP RFC verification)");
           }
           this.session = new SRPSession(this.capabilities.shouldUseBase64);
           this._setState(State.NeedsPin);
           resolve();
         })
-        .catch(reject);
+        .catch((error) => {
+          // A failed capabilities exchange must not leave a zombie port behind: the
+          // next ensureConnected() call needs to be able to establish a fresh one.
+          if (this.port === port) {
+            try {
+              port.disconnect();
+            } catch (_) {}
+            this._dropConnection(port, State.Disconnected, error);
+          }
+          reject(error);
+        });
     });
+    const wrapped = pending.finally(() => {
+      if (this._connectPending === wrapped) this._connectPending = undefined;
+    });
+    this._connectPending = wrapped;
+    return wrapped;
   }
 
   // is there a challenge the user can still answer? the code on the Mac only belongs to
@@ -217,19 +267,20 @@ export class ApplePasswords {
   }
 
   async _issueChallenge() {
-    // reset prior handshake state
-    this.session.serverPublicKey = undefined;
-    this.session.salt = undefined;
-    this.session.sharedKey = undefined;
+    // A new code is a new SRP handshake, not a retry of the old one. Reusing the old
+    // TID/private key can make the real helper treat m0 as the already-issued challenge.
+    const session = new SRPSession(this.capabilities?.shouldUseBase64);
+    this.session = session;
+    this._challengeAt = 0;
     this._challengeGen++;
 
     const reply = await this._send(Command.HANDSHAKE, {
       msg: {
         QID: "m0",
         PAKE: jsonToBase64({
-          TID: this.session.username,
+          TID: session.username,
           MSG: MSGType.ClientKeyExchange,
-          A: this.session.serialize(this.session.clientPublicKeyBytes),
+          A: session.serialize(session.clientPublicKeyBytes),
           VER: VERSION,
           PROTO: [SecretSessionVersion.SRPWithRFCVerification],
         }),
@@ -237,15 +288,16 @@ export class ApplePasswords {
       },
     });
 
+    if (this.session !== session) throw challengeError("Challenge was superseded; request another code");
     const pake = JSON.parse(bytesToUtf8(base64ToBytes(reply.payload.PAKE)));
-    if (pake.TID !== this.session.username) throw new Error("challenge for another session");
+    if (pake.TID !== session.username) throw new Error("challenge for another session");
     if (pake.ErrCode !== undefined) throw new Error(`server hello error ${pake.ErrCode}`);
     if (pake.MSG.toString() !== MSGType.ServerKeyExchange.toString()) throw new Error("unexpected server message");
     if (pake.PROTO !== SecretSessionVersion.SRPWithRFCVerification) throw new Error("unsupported protocol");
 
-    const B = bytesToBigInt(this.session.deserialize(pake.B));
-    const s = this.session.deserialize(pake.s); // raw bytes, see setServerPublicKey
-    this.session.setServerPublicKey(B, s);
+    const B = bytesToBigInt(session.deserialize(pake.B));
+    const s = session.deserialize(pake.s); // raw bytes, see setServerPublicKey
+    session.setServerPublicKey(B, s);
     this._challengeAt = Date.now();
     this._setState(State.NeedsPin);
     return true;
@@ -296,6 +348,7 @@ export class ApplePasswords {
         // the session itself can be gone already if the port dropped mid-verify
         if (this.session) {
           this.session.sharedKey = undefined;
+          this.session._encryptionKey = undefined;
           this.session.serverPublicKey = undefined;
           this.session.salt = undefined;
         }
@@ -347,15 +400,26 @@ export class ApplePasswords {
     if (!this.ready) throw new Error("not unlocked");
     const { hostname } = new URL(url);
     return this._withLock(async () => {
-      const res = await this._encryptedQuery(
-        Command.GET_PASSWORD_FOR_LOGIN_NAME,
-        tabId,
-        // query by trusted frame hostname, never caller-supplied loginName.sites
-        // which a page could use to request another origin's password
-        hostname,
-        { ACT: Action.SEARCH, URL: hostname, USR: loginName.username },
-        null, // no timeout, helper may require Touch ID here
-      );
+      let res;
+      try {
+        res = await this._encryptedQuery(
+          Command.GET_PASSWORD_FOR_LOGIN_NAME,
+          tabId,
+          // Query by trusted frame hostname, never caller-supplied loginName.sites,
+          // which a page could use to request another origin's password.
+          hostname,
+          { ACT: Action.SEARCH, URL: hostname, USR: loginName.username },
+          PASSWORD_READ_TIMEOUT_MS,
+        );
+      } catch (error) {
+        if (/timeout waiting for response/i.test(String(error?.message ?? error))) {
+          // Replies have no correlation ID. Drop the port so a late reply cannot be
+          // mistaken for a later password request after this timeout releases the lock.
+          this.disconnect();
+          throw new Error("Password request timed out; try again");
+        }
+        throw error;
+      }
       if (res.STATUS === QueryStatus.Success) {
         const e = (res.Entries ?? [])[0];
         if (!e) return undefined;
@@ -407,15 +471,17 @@ export class ApplePasswords {
   }
 
   disconnect() {
-    if (!this.port) return;
+    const port = this.port;
+    if (!port) {
+      this._dropConnection(undefined, State.Disconnected);
+      return;
+    }
     try {
-      this.port.postMessage({ cmd: Command.END });
+      port.postMessage({ cmd: Command.END });
     } catch (_) {}
     try {
-      this.port.disconnect();
+      port.disconnect();
     } catch (_) {}
-    this.port = undefined;
-    this.session = undefined;
-    this._setState(State.Disconnected);
+    this._dropConnection(port, State.Disconnected);
   }
 }

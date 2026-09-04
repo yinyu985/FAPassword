@@ -9,7 +9,7 @@
 <h1 align="center">FAPassword</h1>
 
 <p align="center">
-  A Chrome/Edge extension that talks to Apple Passwords (iCloud Keychain) on macOS and autofills your logins, without the official extension's headaches.
+  A Chromium extension that talks to Apple Passwords (iCloud Keychain) on macOS and autofills your logins, without the official extension's headaches.
 </p>
 
 ---
@@ -30,11 +30,11 @@ As long as the OCR got six digits right, pasting `123 456`, `1234 56` or `123.45
 
 | The complaint about Apple's extension | What this does |
 |---|---|
-| re-prompts for the 6-digit code every restart, sometimes every few hours | a keep-alive alarm holds the MV3 worker and the session alive, so you enter the code once per real session ([background.js](src/background.js)) |
+| re-prompts for the 6-digit code every restart, sometimes every few hours | the live native-messaging port keeps the MV3 worker and session alive; a real disconnect is detected and recovered cleanly ([protocol.js](src/protocol.js)) |
 | "Enable AutoFill" balloon on every field, including OTP boxes | the inline dropdown shows up only on genuine login fields and never on one-time-code boxes ([content.js](src/content.js)) |
 | 100% CPU / typing lag | the content script does zero per-keystroke work, it only reacts when you focus a login field |
 | re-downloads every image on hover to scan for QR codes | there's no image or QR scanning here at all |
-| fills the wrong field or wrong origin | fills are pinned to the page's origin and skip hidden/clickjacked fields |
+| fills the wrong field or wrong origin | fills are pinned to an exact origin and frame, and only visible fields are eligible |
 
 You fill two ways: the inline dropdown when you focus a login field, or the toolbar popup. Both run through the same origin-checked, OS-authorized path.
 
@@ -71,7 +71,7 @@ Borrowing Apple's key is the only way in. The evidence is in [VERIFICATION.md](V
 ## Requirements
 
 - macOS 14 (Sonoma) or later, signed into iCloud with Passwords on
-- Chrome or Edge
+- Chrome, Edge, Chromium, Brave, or Helium (native-helper acceptance can vary by macOS/browser build)
 - Apple's official iCloud Passwords extension removed or disabled
 
 ## Install
@@ -95,7 +95,7 @@ The popup can suppress the browser's competing save bubble and autofill dropdown
 ./native/install.sh   # registers a tiny native helper, macOS only
 ```
 
-Then fully quit and reopen your browser (`Cmd+Q`). The **Hide browser password manager entirely** toggle in the popup now works; it sets `PasswordManagerEnabled=false` for every Chromium browser you have. Undo anytime with `./native/uninstall.sh`. The helper only runs three fixed `defaults` commands and accepts messages solely from this extension's ID.
+Then fully quit and reopen your browser (`Cmd+Q`). The **Hide browser password manager entirely** toggle builds a macOS configuration profile and opens it for your approval. The helper accepts messages solely from this extension's ID and only opens that profile or the System Settings profile pane. `./native/uninstall.sh` removes the helper registration; an installed profile must be removed by you in System Settings.
 
 ## How it works
 
@@ -103,7 +103,7 @@ Then fully quit and reopen your browser (`Cmd+Q`). The **Hide browser password m
 popup.js / content.js
         │  runtime messages
         ▼
-background.js  ──  keep-alive alarm keeps the session warm
+background.js  ──  owns the live native port and rejects stale/disconnected work
         │
         ▼
 protocol.js  ──  chrome.runtime.connectNative("com.apple.passwordmanager")
@@ -131,12 +131,33 @@ The extension asks for a code only when no live code exists. After a failed atte
 
 A code expires after 3 minutes. After that, the extension asks your Mac for a new code instead of checking the old one.
 
+### Filling remains stuck after a Touch ID prompt
+
+A password read is allowed up to 2 minutes. If Apple's helper never replies and never disconnects,
+FAPassword closes that ambiguous native stream so a late reply cannot be applied to another request.
+Select the login again to reconnect. If it repeats, fully quit the browser and reopen it.
+
+### The official Apple extension behaves strangely alongside FAPassword
+
+Do not enable both at once. The native helper requires Apple's accepted extension identity, so the
+two extensions collide at the integration boundary and can race for prompts and field handling.
+
 ## Security notes
 
 - the session key lives only in the worker's memory and is never written to disk
 - every password query is AES-GCM encrypted end to end with the helper
 - the PIN only derives the SRP shared key, it isn't stored
+- PIN entry stays in the extension popup; account suggestions render in a closed Shadow DOM
+- password delivery is pinned to the exact frame and origin and refuses non-HTTPS sites (except local development hosts)
 - reading a password can trigger a Touch ID prompt, that's the helper, not this extension
+
+## Development
+
+`npm run check` validates JavaScript, shell/Python syntax, locales, and manifest resources.
+`npm test` runs dependency-free protocol/crypto regressions. `npm run build` creates one
+clean, reproducible directory under `dist/`; load that directory as the unpacked extension.
+Optional browser automation is documented in
+[`test-harness/automation/README.md`](test-harness/automation/README.md) and never downloads a browser automatically.
 
 ## Credits
 

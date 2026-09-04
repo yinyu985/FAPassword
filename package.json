@@ -3,7 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node test-harness/automation/run-unit.mjs",
+    "test:e2e": "node test-harness/automation/run-all.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   },
   "engines": {
     "node": ">=18"

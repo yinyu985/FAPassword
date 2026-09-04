@@ -38,9 +38,9 @@ Legend: ✅ correct · ⚠️ partial / clunky · ❌ wrong or nags · — n/a
 
 ## 0. Pre-verified field detection (FAPassword)
 
-Automated results: the content-script classifier was run against each harness page
-directly (JSDOM), so they're objective. The live A/B below adds the on-screen
-behavior you can only see in Chrome.
+Automated coverage lives in `automation/`: dependency-free policy tests cover the field
+classifier, while the optional browser drivers load these fixture pages with isolated mock
+extensions. The live A/B below adds behavior that only a real Apple extension can show.
 
 | Page | Fields ours targets | OTP boxes ours skips | Correct? |
 |---|---|---|---|

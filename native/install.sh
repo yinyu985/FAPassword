@@ -33,7 +33,7 @@ EOF
   found=$((found + 1))
 }
 
-for b in "Google/Chrome" "Google/Chrome Beta" "Google/Chrome Dev" "Google/Chrome Canary" "Microsoft Edge" "Chromium"; do
+for b in "Google/Chrome" "Google/Chrome Beta" "Google/Chrome Dev" "Google/Chrome Canary" "Microsoft Edge" "Chromium" "net.imput.helium"; do
   [ -d "$SUPPORT/$b" ] && register "$SUPPORT/$b"
 done
 for d in "$SUPPORT/BraveSoftware/"*/; do

@@ -1,12 +1,11 @@
 // security regression: cross-origin iframe must not get an autofill offer
 // confused-deputy leak from all_frames: a foreign sub-frame could fill the top page password
 import { fileURLToPath } from "url";
-const pw = await import(process.env.OP_PW || "/tmp/op-test/node_modules/playwright/index.js");
-const { chromium } = pw.default || pw;
-const EXT = process.env.OP_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
-const BASE = process.env.OP_BASE || "http://127.0.0.1:8799";
+import { chromium } from "./e2e-playwright.mjs";
+const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
+const BASE = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
 
-const ctx = await chromium.launchPersistentContext("/tmp/op-xo-" + Date.now(), {
+const ctx = await chromium.launchPersistentContext("/tmp/fapassword-xo-" + Date.now(), {
   headless: false,
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--headless=new", "--no-first-run"],
 });
@@ -31,7 +30,7 @@ if (!xframe) {
 await xframe
   .locator('input[name="username"], input[autocomplete="username"], input[type="text"]')
   .first()
-  .focus()
+  .click()
   .catch(() => {});
 await page.waitForTimeout(700);
 const dd = await xframe.locator('[data-fapassword="suggestions"]').count();

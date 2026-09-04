@@ -1,44 +1,42 @@
-# Headless test suite
+# Automated checks
 
-Automated tests that load the extension in real headless Chrome (Playwright) and
-assert the dropdown/fill/PIN behavior across scenarios. They use mock builds of the
-extension (the native-helper message handlers are replaced with mocks) so no macOS
-helper or real PIN is needed.
+The HTML files in `test-harness/` are the human-readable fixture pages, and
+`test-harness/COMPARISON.md` is the manual Apple-vs-FAPassword worksheet. This `automation/`
+directory drives those same fixtures with isolated mock extensions; it does not replace the
+manual comparison against Apple's real extension.
 
-## Run
+`npm test` runs the dependency-free unit suite. It exercises SRP challenge lifecycle,
+independent crypto fingerprints/vectors, native-port disconnect handling, and reconnects.
+
+`npm run test:e2e` runs the optional browser suite. It builds isolated mock extensions,
+starts a local HTTP fixture server, runs every driver, then stops only the server it started.
+It does **not** install Playwright or download a browser.
+
+To run browser checks, point the suite at an existing Playwright module if it is not already
+installed in your environment:
 
 ```bash
-# 0. one-time: install playwright + chromium somewhere, then point OP_PW at it
-#    (or rely on the default /tmp path if present)
-npm i playwright && npx playwright install chromium
-
-# 1. generate the mock extension builds
-node build-test-extensions.mjs
-
-# 2. serve the harness pages (separate terminal, from test-harness/)
-cd .. && python3 -m http.server 8799 --bind 127.0.0.1
-
-# 3. run the whole suite
-node run-all.mjs
+FAPASSWORD_PLAYWRIGHT=/path/to/playwright/index.js npm run test:e2e
 ```
 
-Override paths with env vars if needed:
-- `OP_PW`: path to playwright's `index.js`
-- `OP_BASE`: harness base URL (default `http://127.0.0.1:8799`)
-- `OP_EXT`: load a specific extension build instead of the mock
+To make Playwright use an existing Chrome/Chromium/Helium binary rather than a bundled one:
 
-## What each driver covers
+```bash
+FAPASSWORD_PLAYWRIGHT=/path/to/playwright/index.js \
+FAPASSWORD_BROWSER_EXECUTABLE="/Applications/Helium.app/Contents/MacOS/Helium" \
+npm run test:e2e
+```
 
-| Driver | Checks |
-|---|---|
-| `drive.mjs` | Offer on login fields; nothing on OTP/newsletter; locked shows PIN field |
-| `drive-adversarial.mjs` | No dropdown on search/tag(Instagram)/comment/checkout/profile; mixed page only on login |
-| `drive-bench.mjs` | The combined testbench page, positives + negatives |
-| `drive-anchor.mjs` | Fill targets the field you acted on, not another form |
-| `drive-clickback.mjs` | Dropdown reappears after click-away-then-back |
-| `drive-events.mjs` | `input`/`change` events fire on fill (login isn't rejected) |
-| `drive-clickjack.mjs` | A hidden/offscreen password field is NOT filled |
-| `drive-multi.mjs` | Chooser lists multiple saved logins |
-| `drive-pin.mjs` | Wrong PIN shows error; right PIN unlocks + fills |
+Optional environment variables:
 
-Outputs screenshots to `shots/` (gitignored).
+- `FAPASSWORD_BASE`: use an already-running fixture server instead of the default local one.
+- `FAPASSWORD_PLAYWRIGHT`: path to an existing Playwright module.
+- `FAPASSWORD_BROWSER_EXECUTABLE`: existing Chromium-compatible browser executable.
+
+The mock builder opens the suggestion Shadow DOM only in inspectable test builds. The
+`privacy` build keeps the production `closed` mode and verifies that page JavaScript cannot
+read account names. No real Apple Passwords data, PIN, or Touch ID interaction is used.
+
+Browser coverage includes login/OTP/adversarial classification, targeted fills, input events,
+hidden fields, same- and cross-origin frames, multi-account UI, scripted-submit rejection,
+and the closed-shadow privacy boundary.

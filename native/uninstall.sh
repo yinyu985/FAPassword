@@ -1,15 +1,14 @@
 #!/bin/sh
-# removes the policy helper and restores the browser's own password manager. macOS only.
+# Removes the native host registration and its local helper copy. macOS configuration
+# profiles cannot be removed by this script; remove "FAPassword - Hide Browser Password
+# Manager" in System Settings > General > Device Management to restore the managed policy.
 set -e
 SUPPORT="$HOME/Library/Application Support"
 # every chrome/edge/chromium dir plus every BraveSoftware/* variant
-for d in "$SUPPORT/Google/Chrome"* "$SUPPORT/Microsoft Edge" "$SUPPORT/Chromium" "$SUPPORT/BraveSoftware/"*/; do
+for d in "$SUPPORT/Google/Chrome"* "$SUPPORT/Microsoft Edge" "$SUPPORT/Chromium" "$SUPPORT/net.imput.helium" "$SUPPORT/BraveSoftware/"*/; do
   rm -f "${d%/}/NativeMessagingHosts/com.fapassword.policy.json" 2>/dev/null || true
 done
-# lift the policy itself (ignore if it was never set)
-for bundle in com.brave.Browser com.brave.Browser.origin com.brave.Browser.beta com.brave.Browser.nightly com.brave.Browser.dev com.google.Chrome com.google.Chrome.beta com.google.Chrome.dev com.google.Chrome.canary com.microsoft.edgemac org.chromium.Chromium; do
-  defaults delete "$bundle" PasswordManagerEnabled 2>/dev/null || true
-done
-# remove the installed helper copy
-rm -rf "$SUPPORT/FAPassword"
-echo "Removed the helper and restored the browser password manager. Restart your browser."
+# Remove only files this installer creates; leave an unexpected non-empty directory alone.
+rm -f "$SUPPORT/FAPassword/fapassword-policy.py" "$SUPPORT/FAPassword/FAPassword-HidePasswordManager.mobileconfig"
+rmdir "$SUPPORT/FAPassword" 2>/dev/null || true
+echo "Removed the FAPassword helper. If its configuration profile is installed, remove it in System Settings > General > Device Management, then restart your browser."

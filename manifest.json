@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "FAPassword",
-  "version": "0.46.0",
-  "description": "Open-source client for Apple Passwords (iCloud Keychain) on Chrome. Connects to the macOS native helper and prompts for access.",
+  "name": "__MSG_extensionName__",
+  "version": "0.47.0",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
+  "minimum_chrome_version": "123",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk4xPYZla5XqlDN0PPiLCQAYRqdaR06jSl3sntEE5jHoe7XldFqhsdBSp4L8mozwjCwi6z5YtEpTV1L2k4WYmDuiwoH7YKGlQD/YbC8QMcPvGLWOr8WYfXWtECKv0Nx7Tahk8nCIDWgJVm8YmPIDhPv4o5VVrq6aUveCKvTOskHWFyRzSTC2VKpzIVX7F65UzqqOmqLfMpo6lfaLcKSC7G6oQLA/wS7hcGZEwZ11si6XWR4o/hDuUSt6zdacy/sc7H80eH3lMnEmvb6HoB7+KvxfGIU7dqRmhA/w/X0qkiIJYeoo4tZrNxBj7TTLz9hnHUbMRwJqsoIU+pkoprgFWDQIDAQAB",
   "background": {
     "service_worker": "src/background.js",
@@ -23,37 +25,17 @@
         "*://*/*"
       ],
       "js": [
+        "src/iframe-hosts.js",
+        "src/field-policy.js",
+        "src/password-generator.js",
         "src/content.js"
       ],
       "run_at": "document_idle",
       "all_frames": true
-    },
-    {
-      "matches": [
-        "*://*/*"
-      ],
-      "js": [
-        "src/passkey-bridge.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": true
-    },
-    {
-      "matches": [
-        "*://*/*"
-      ],
-      "js": [
-        "src/passkey-guard.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
     }
   ],
   "permissions": [
     "nativeMessaging",
-    "activeTab",
-    "alarms",
     "privacy",
     "storage"
   ],
@@ -65,10 +47,13 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "web_accessible_resources": [
-    {
-      "resources": ["fonts/*.woff2"],
-      "matches": ["*://*/*"]
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "__MSG_openPopupCommand__"
     }
-  ]
+  }
 }

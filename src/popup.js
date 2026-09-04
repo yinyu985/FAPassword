@@ -1,3 +1,13 @@
+import { activeTab, normalizePin, pageContext } from "./shared.js";
+
+const t = (name, substitutions) => chrome.i18n.getMessage(name, substitutions) || name;
+document.documentElement.lang = chrome.i18n.getUILanguage().replace("_", "-");
+for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+for (const el of document.querySelectorAll("[data-i18n-title]")) el.title = t(el.dataset.i18nTitle);
+for (const el of document.querySelectorAll("[data-i18n-aria-label]")) {
+  el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel));
+}
+
 const views = {
   nohelper: document.getElementById("view-nohelper"),
   pin: document.getElementById("view-pin"),
@@ -6,64 +16,64 @@ const views = {
 };
 const dot = document.getElementById("dot");
 const pinInput = document.getElementById("pin");
+const pinNote = document.getElementById("pin-note");
 const pinError = document.getElementById("pin-error");
 const refreshBtn = document.getElementById("refresh");
 const verifyBtn = document.getElementById("verify");
-
-function normalizePin(value) {
-  return String(value ?? "")
-    .normalize("NFKC")
-    .replace(/\D/g, "")
-    .slice(0, 6);
-}
+const newCodeBtn = document.getElementById("newcode");
 
 function show(name) {
   for (const [k, el] of Object.entries(views)) el.hidden = k !== name;
 }
 
-// togglable suppression of the browser's save/update bubble. ON sets the pref off, OFF hands
-// control back to the browser. the choice persists and the background respects it on startup
-const pmToggle = document.getElementById("pm-toggle");
-const pmNote = document.getElementById("pm-note");
-
-function renderPmToggle() {
-  const pref = chrome.privacy?.services?.passwordSavingEnabled;
-  const row = document.getElementById("pm-row");
+// Both browser privacy toggles have the same lifecycle: show only when supported, persist
+// the user's choice, set/clear the Chromium preference, then read it back because policy can
+// silently refuse a write.
+function setupPrivacyToggle({ toggleId, rowId, noteId, service, storageKey, blockedText, refusedText }) {
+  const toggle = document.getElementById(toggleId);
+  const row = document.getElementById(rowId);
+  const note = document.getElementById(noteId);
+  const pref = chrome.privacy?.services?.[service];
   if (!pref?.get) return;
-  pref.get({}, (d) => {
-    if (chrome.runtime.lastError || !d) return;
-    row.hidden = false;
-    pmToggle.checked = d.value === false;
-    const controllable =
-      d.levelOfControl === "controllable_by_this_extension" ||
-      d.levelOfControl === "controlled_by_this_extension";
-    pmToggle.disabled = !controllable;
-    pmNote.textContent = controllable
-      ? ""
-      : d.levelOfControl === "controlled_by_other_extensions"
-        ? "controlled by another extension"
-        : "controlled by browser policy";
+
+  const render = () => {
+    pref.get({}, (detail) => {
+      if (chrome.runtime.lastError || !detail) return;
+      row.hidden = false;
+      toggle.checked = detail.value === false;
+      const controllable =
+        detail.levelOfControl === "controllable_by_this_extension" ||
+        detail.levelOfControl === "controlled_by_this_extension";
+      toggle.disabled = !controllable;
+      note.textContent = controllable ? "" : blockedText(detail.levelOfControl);
+    });
+  };
+
+  toggle.addEventListener("change", () => {
+    const on = toggle.checked;
+    chrome.storage?.local?.set({ [storageKey]: on });
+    const verify = () =>
+      pref.get({}, (detail) => {
+        render();
+        if (on && detail && detail.value !== false) note.textContent = t(refusedText);
+      });
+    if (on) pref.set({ value: false }, verify);
+    else pref.clear({}, verify);
   });
+
+  render();
 }
 
-pmToggle.addEventListener("change", () => {
-  const pref = chrome.privacy?.services?.passwordSavingEnabled;
-  if (!pref) return;
-  const on = pmToggle.checked;
-  chrome.storage?.local?.set({ suppressSaveBubble: on });
-  // read back after writing - dont trust the callback, the browser can silently refuse
-  const verify = () =>
-    pref.get({}, (d) => {
-      renderPmToggle();
-      if (on && d && d.value !== false) {
-        pmNote.textContent = "browser refused it - flip it in password settings below";
-      }
-    });
-  if (on) pref.set({ value: false }, verify);
-  else pref.clear({}, verify);
+setupPrivacyToggle({
+  toggleId: "pm-toggle",
+  rowId: "pm-row",
+  noteId: "pm-note",
+  service: "passwordSavingEnabled",
+  storageKey: "suppressSaveBubble",
+  blockedText: (level) =>
+    t(level === "controlled_by_other_extensions" ? "controlledByExtension" : "controlledByPolicy"),
+  refusedText: "browserRefused",
 });
-
-renderPmToggle();
 
 // hide the browser password manager via a real macOS config profile (a user defaults write isnt forced), approved once in System Settings
 const policyToggle = document.getElementById("policy-toggle");
@@ -86,7 +96,7 @@ async function renderPolicyToggle() {
   const r = await policyMsg("get");
   if (r.error || !r.ok) {
     policyToggle.disabled = true;
-    policyNote.textContent = "needs the policy helper - run native/install.sh";
+    policyNote.textContent = t("policyHelperNeeded");
     return;
   }
   policyToggle.disabled = false;
@@ -100,65 +110,28 @@ policyToggle.addEventListener("change", async () => {
   const r = await policyMsg(on ? "set" : "clear");
   policyToggle.disabled = false;
   if (r.error || !r.ok) {
-    policyNote.textContent = "helper failed - run native/install.sh";
+    policyNote.textContent = t("policyHelperFailed");
     policyToggle.checked = !on;
     return;
   }
   // reflect the REAL forced-policy state; the profile only sticks once approved
   policyToggle.checked = !!r.hidden;
-  if (on && !r.hidden) policyNote.textContent = "approve the profile in System Settings, then reopen this popup";
-  else if (!on && r.hidden) policyNote.textContent = "remove the profile in System Settings, then reopen this popup";
+  if (on && !r.hidden) policyNote.textContent = t("approveProfile");
+  else if (!on && r.hidden) policyNote.textContent = t("removeProfile");
   else policyNote.textContent = "";
 });
 
 renderPolicyToggle();
 
-// hides the browser's address/contact autofill and typed-form history (the email-list
-// dropdown). credit-card autofill stays untouched so google pay keeps working
-const afToggle = document.getElementById("af-toggle");
-const afNote = document.getElementById("af-note");
-
-function renderAfToggle() {
-  const pref = chrome.privacy?.services?.autofillAddressEnabled;
-  const row = document.getElementById("af-row");
-  if (!pref?.get) return;
-  pref.get({}, (d) => {
-    if (chrome.runtime.lastError || !d) return;
-    row.hidden = false;
-    afToggle.checked = d.value === false;
-    const controllable =
-      d.levelOfControl === "controllable_by_this_extension" ||
-      d.levelOfControl === "controlled_by_this_extension";
-    afToggle.disabled = !controllable;
-    afNote.textContent = controllable ? "" : "controlled elsewhere";
-  });
-}
-
-afToggle.addEventListener("change", () => {
-  const pref = chrome.privacy?.services?.autofillAddressEnabled;
-  if (!pref) return;
-  const on = afToggle.checked;
-  chrome.storage?.local?.set({ suppressAddressAutofill: on });
-  const verify = () =>
-    pref.get({}, (d) => {
-      renderAfToggle();
-      if (on && d && d.value !== false) {
-        afNote.textContent = "browser refused it - flip it in autofill settings";
-      }
-    });
-  if (on) pref.set({ value: false }, verify);
-  else pref.clear({}, verify);
-});
-
-renderAfToggle();
-
-// swallow the browser's conditional passkey autofill dropdown; plain stored flag the MAIN-world guard reads, explicit sign-in unaffected
-const pkToggle = document.getElementById("pk-toggle");
-chrome.storage?.local?.get({ hidePasskeys: false }, (d) => {
-  pkToggle.checked = !!d.hidePasskeys;
-});
-pkToggle.addEventListener("change", () => {
-  chrome.storage?.local?.set({ hidePasskeys: pkToggle.checked });
+// Address/contact autofill and typed-form history only; credit-card autofill stays untouched.
+setupPrivacyToggle({
+  toggleId: "af-toggle",
+  rowId: "af-row",
+  noteId: "af-note",
+  service: "autofillAddressEnabled",
+  storageKey: "suppressAddressAutofill",
+  blockedText: () => t("controlledElsewhere"),
+  refusedText: "autofillRefused",
 });
 
 function setDot(state) {
@@ -169,17 +142,19 @@ function setDot(state) {
 }
 
 function send(msg) {
-  return new Promise((resolve) => chrome.runtime.sendMessage(msg, resolve));
-}
-
-async function activeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(msg, (response) => {
+      const error = chrome.runtime.lastError;
+      resolve(error ? { ok: false, error: error.message } : response);
+    });
+  });
 }
 
 let lastState = "disconnected";
+let renderSeq = 0;
 
 async function render(state) {
+  const seq = ++renderSeq;
   lastState = state;
   setDot(state);
   refreshBtn.hidden = state !== "unlocked" && state !== "needs_pin";
@@ -191,25 +166,34 @@ async function render(state) {
     return;
   }
   if (state === "unlocked") {
-    await renderLogins();
+    await renderLogins(seq);
+    if (seq !== renderSeq) return;
     return show("unlocked");
   }
   // unknown state must never leave every view hidden (blank popup)
   show("connecting");
 }
 
-async function renderLogins() {
+async function renderLogins(seq = renderSeq) {
   const tab = await activeTab();
-  document.getElementById("site").textContent = tab?.url ? new URL(tab.url).hostname : "";
   const list = document.getElementById("logins");
   const none = document.getElementById("nologins");
   list.innerHTML = "";
   none.hidden = true;
 
-  const res = await send({ type: "getLogins", tabId: tab.id, url: tab.url });
+  const context = tab?.url ? pageContext(tab.url) : null;
+  document.getElementById("site").textContent = context?.host || "";
+  if (tab?.id == null || !context || !["http:", "https:"].includes(context.url.protocol)) {
+    none.textContent = t("pageUnavailable");
+    none.hidden = false;
+    return;
+  }
+
+  const res = await send({ type: "getLogins" });
+  if (seq !== renderSeq) return;
   if (!res?.ok) {
     none.hidden = false;
-    none.textContent = res?.error ?? "Couldn't load logins.";
+    none.textContent = res?.error ?? t("loadFailed");
     return;
   }
   if (!res.logins.length) {
@@ -220,14 +204,19 @@ async function renderLogins() {
     const li = document.createElement("li");
     const u = document.createElement("span");
     u.className = "u";
-    u.textContent = login.username || "(no username)";
+    u.textContent = login.username || t("noUsername");
+    u.title = login.username || t("noUsername");
     const fill = document.createElement("button");
-    fill.textContent = "Fill";
+    fill.textContent = t("fill");
     fill.addEventListener("click", async () => {
       fill.disabled = true;
-      const r = await send({ type: "fillOnPage", tabId: tab.id, url: tab.url, loginName: login });
+      const r = await send({ type: "fillOnPage", loginName: login });
       if (r?.ok && r.filled) window.close();
-      else fill.disabled = false;
+      else {
+        fill.disabled = false;
+        none.textContent = r?.error || t("fillFailed");
+        none.hidden = false;
+      }
     });
     li.append(u, fill);
     list.appendChild(li);
@@ -238,20 +227,23 @@ let verifyingPin = false;
 
 async function verifyPin() {
   if (verifyingPin) return;
+  pinNote.hidden = true;
   pinError.hidden = true;
   const pin = normalizePin(pinInput.value);
   pinInput.value = pin;
   if (pin.length !== 6) return;
   verifyingPin = true;
   verifyBtn.disabled = true;
+  newCodeBtn.disabled = true;
   const res = await send({ type: "verifyPin", pin });
   verifyingPin = false;
   verifyBtn.disabled = false;
+  newCodeBtn.disabled = false;
   if (res?.ok) render(res.state);
   else {
     // a failed attempt spends the code, so the background put a fresh one on the Mac
-    const base = res?.error ?? "Verification failed.";
-    pinError.textContent = res?.newCode ? `${base} - enter the new code on your Mac` : base;
+    const base = res?.error ?? t("verificationFailed");
+    pinError.textContent = res?.newCode ? t("enterNewCode", base) : base;
     pinError.hidden = false;
     pinInput.value = "";
     pinInput.focus();
@@ -288,42 +280,61 @@ function flashNote(text) {
   noteTimer = setTimeout(() => (el.hidden = true), 2500);
 }
 
+let requestingNewCode = false;
+async function requestNewCode() {
+  if (requestingNewCode || verifyingPin) return;
+  requestingNewCode = true;
+  pinNote.hidden = true;
+  pinError.hidden = true;
+  pinInput.value = "";
+  newCodeBtn.disabled = true;
+  newCodeBtn.setAttribute("aria-busy", "true");
+  newCodeBtn.textContent = t("requestingNewCode");
+
+  try {
+    const res = await send({ type: "requestChallenge" });
+    if (!res?.ok || !res.hasChallenge) {
+      pinError.textContent = res?.error ?? t("codeRequestFailed");
+      pinError.hidden = false;
+      return;
+    }
+    await render(res.state);
+    pinNote.textContent = t("newCodeReady");
+    pinNote.hidden = false;
+    pinInput.focus();
+  } catch (error) {
+    pinError.textContent = String(error?.message ?? error ?? t("codeRequestFailed"));
+    pinError.hidden = false;
+  } finally {
+    requestingNewCode = false;
+    newCodeBtn.disabled = false;
+    newCodeBtn.removeAttribute("aria-busy");
+    newCodeBtn.textContent = t("requestNewCode");
+  }
+}
+
 refreshBtn.addEventListener("click", async () => {
   refreshBtn.disabled = true;
   refreshBtn.classList.add("spinning");
   if (lastState === "needs_pin") {
     // locked: refresh means "get me a fresh code on the mac"
-    pinError.hidden = true;
-    pinInput.value = "";
-    const res = await send({ type: "requestChallenge" });
-    if (res?.ok) render(res.state);
-    else {
-      pinError.textContent = res?.error ?? "Couldn't request a code.";
-      pinError.hidden = false;
-    }
+    await requestNewCode();
   } else {
     // unlocked: drop cached passwords, re-fill the page with a fresh read (a password just
     // changed in the Passwords app lands without re-clicking Fill), then re-list
     const r = await send({ type: "refreshAndRefill" });
     await renderLogins();
-    if (r?.refilled) flashNote(`Re-filled ${r.username} with the latest password`);
-    else flashNote("Passwords refreshed");
+    if (r?.refilled) flashNote(t("refilled", r.username));
+    else flashNote(t("passwordsRefreshed"));
   }
   refreshBtn.classList.remove("spinning");
   refreshBtn.disabled = false;
 });
 
-document.getElementById("newcode").addEventListener("click", async () => {
-  pinError.hidden = true;
-  const res = await send({ type: "requestChallenge" });
-  if (res?.ok) render(res.state);
-  else {
-    pinError.textContent = res?.error ?? "Couldn't request a code.";
-    pinError.hidden = false;
-  }
-});
+newCodeBtn.addEventListener("click", requestNewCode);
 
-chrome.runtime.onMessage.addListener((msg) => {
+const statePort = chrome.runtime.connect({ name: "fapassword-popup" });
+statePort.onMessage.addListener((msg) => {
   if (msg?.type === "state") render(msg.state);
 });
 
@@ -335,6 +346,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     // (the inline box may have just asked for one) - a second prompt kills the first code
     const ch = await send({ type: "requestChallenge", ifNeeded: true });
     state = ch?.state ?? state;
+    if (!ch?.ok) {
+      pinError.textContent = ch?.error || t("codeRequestFailed");
+      pinError.hidden = false;
+    }
   }
   render(state);
 })();

@@ -77,7 +77,7 @@ class SrpServer {
 // --- fake native host ------------------------------------------------------------------
 // one code per challenge, and a failed verify burns it, like the real helper
 function makeHost({ salts, pins }) {
-  const state = { codesShown: [], challenges: 0, server: null, live: false };
+  const state = { codesShown: [], clientHellos: [], challenges: 0, server: null, live: false };
   let saltIdx = 0;
   let pinIdx = 0;
 
@@ -104,6 +104,7 @@ function makeHost({ salts, pins }) {
 
     if (msg.msg.QID === "m0") {
       state.challenges++;
+      state.clientHellos.push({ tid: pake.TID, publicKey: pake.A });
       const pin = pins[Math.min(pinIdx++, pins.length - 1)];
       const salt = salts[Math.min(saltIdx++, salts.length - 1)];
       state.codesShown.push(pin);
@@ -224,6 +225,14 @@ async function freshClient() {
   await c.requestChallenge();
   const firstCode = host.codesShown[0];
   await c.requestChallenge(); // e.g. the user hit "get a new code"
+  ok(
+    "a forced new code starts a fresh SRP identity",
+    host.clientHellos[0].tid !== host.clientHellos[1].tid,
+  );
+  ok(
+    "a forced new code uses a fresh SRP public key",
+    host.clientHellos[0].publicKey !== host.clientHellos[1].publicKey,
+  );
   let err = null;
   await c.verifyPin(firstCode).catch((e) => (err = e));
   ok("stale code fails as a wrong code, not a crash", !!err && c.state !== "unlocked", String(err?.message));

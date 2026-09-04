@@ -1,8 +1,7 @@
 import { fileURLToPath } from "url";
-const pw = await import(process.env.OP_PW || "/tmp/op-test/node_modules/playwright/index.js");
-const { chromium } = pw.default || pw;
-const EXT = process.env.OP_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
-const ctx = await chromium.launchPersistentContext("/tmp/op-anc-" + Date.now(), {
+import { chromium } from "./e2e-playwright.mjs";
+const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
+const ctx = await chromium.launchPersistentContext("/tmp/fapassword-anc-" + Date.now(), {
   headless: false,
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--headless=new", "--no-first-run"],
 });
@@ -11,9 +10,9 @@ const page = await ctx.newPage();
 await page.goto("http://127.0.0.1:8799/testbench.html", { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(300);
 const box = () => page.locator('[data-fapassword="suggestions"]');
-await page.locator("#u2").focus();
+await page.locator("#u2").click();
 await page.waitForTimeout(400);
-await box().locator("text=Click to autofill").click();
+await box().locator("text=test@example.com").click();
 await page.waitForTimeout(600);
 const u1 = await page.inputValue("#u1");
 const u2 = await page.inputValue("#u2");

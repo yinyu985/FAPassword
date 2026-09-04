@@ -6,7 +6,7 @@ export function hexToBytes(hex) {
   if (hex.startsWith("0x")) hex = hex.slice(2);
   if (hex.length % 2) hex = "0" + hex;
   const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return out;
 }
 
