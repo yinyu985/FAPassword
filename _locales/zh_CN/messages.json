@@ -1,49 +1,347 @@
 {
-  "extensionName": { "message": "FAPassword" },
-  "extensionDescription": { "message": "非官方 Chromium 版 Apple 密码客户端——因为 Apple 自己的扩展实在太难用了。" },
-  "openPopupCommand": { "message": "打开 FAPassword" },
-  "refreshPasswords": { "message": "刷新密码" },
-  "status": { "message": "状态" },
-  "noHelperMessage": { "message": "无法连接 Apple 密码辅助程序。需要 macOS 14 或更高版本、密码 App，并且扩展必须使用 Apple 接受的 ID。" },
-  "pinMessage": { "message": "Mac 已生成验证码。输入该验证码以授权访问。" },
-  "verificationCode": { "message": "验证码" },
-  "unlock": { "message": "解锁" },
-  "requestNewCode": { "message": "获取新验证码" },
-  "requestingNewCode": { "message": "正在获取新验证码…" },
-  "newCodeReady": { "message": "新验证码已生成，请输入 Mac 上现在显示的验证码。" },
-  "connecting": { "message": "正在连接 Apple 密码…" },
-  "noLogins": { "message": "此网站没有已保存的密码。" },
-  "browserControls": { "message": "浏览器控制" },
-  "on": { "message": "开" },
-  "off": { "message": "关" },
-  "hideSaveBubble": { "message": "隐藏浏览器的保存密码提示" },
-  "hidePasswordManager": { "message": "彻底隐藏浏览器密码管理器" },
-  "hideAddressAutofill": { "message": "隐藏浏览器自动填充建议" },
-  "controlledByExtension": { "message": "由其他扩展控制" },
-  "controlledByPolicy": { "message": "由浏览器策略控制" },
-  "browserRefused": { "message": "浏览器拒绝了设置，请在密码设置中修改" },
-  "policyHelperNeeded": { "message": "需要策略辅助程序，请运行 native/install.sh" },
-  "policyHelperFailed": { "message": "辅助程序失败，请运行 native/install.sh" },
-  "approveProfile": { "message": "请在系统设置中批准描述文件，然后重新打开此弹窗" },
-  "removeProfile": { "message": "请在系统设置中移除描述文件，然后重新打开此弹窗" },
-  "controlledElsewhere": { "message": "由其他位置控制" },
-  "autofillRefused": { "message": "浏览器拒绝了设置，请在自动填充设置中修改" },
-  "pageUnavailable": { "message": "FAPassword 无法在此页面运行。" },
-  "loadFailed": { "message": "无法加载登录账号。" },
-  "fill": { "message": "填充" },
-  "fillFailed": { "message": "无法填充此页面。" },
-  "verificationFailed": { "message": "验证失败。" },
-  "enterNewCode": { "message": "$ERROR$ — 请输入 Mac 上的新验证码", "placeholders": { "error": { "content": "$1" } } },
-  "codeRequestFailed": { "message": "无法获取验证码。" },
-  "refilled": { "message": "已使用最新密码重新填充 $USERNAME$", "placeholders": { "username": { "content": "$1" } } },
-  "passwordsRefreshed": { "message": "密码已刷新" },
-  "noUsername": { "message": "（无用户名）" },
-  "suggestionsLabel": { "message": "FAPassword 建议" },
-  "openToUnlock": { "message": "打开 FAPassword 进行解锁…" },
-  "requestingCode": { "message": "正在向 Mac 请求验证码…" },
-  "completeUnlockInPopup": { "message": "请在 FAPassword 弹窗中完成解锁" },
-  "codeReadyClickToolbar": { "message": "验证码已生成，请点击工具栏中的 FAPassword 图标输入" },
-  "unlockFailed": { "message": "无法开始解锁，请点击工具栏中的 FAPassword 图标重试" },
-  "strongPassword": { "message": "强密码" },
-  "noSpecialCharacters": { "message": "不含特殊字符" }
+  "extensionName": {
+    "message": "FAPassword"
+  },
+  "extensionDescription": {
+    "message": "非官方 Chromium 版 Apple 密码客户端——因为 Apple 自己的扩展实在太难用了。"
+  },
+  "openPopupCommand": {
+    "message": "打开 FAPassword"
+  },
+  "toolbarConnecting": { "message": "FAPassword — 正在连接 Apple 密码…" },
+  "toolbarDisconnected": { "message": "FAPassword — 连接失败，打开扩展重试。" },
+  "toolbarNoHelper": { "message": "FAPassword — Apple 密码助手不可用，打开扩展查看详情。" },
+  "toolbarLocked": { "message": "FAPassword — 尚未解锁，打开扩展完成验证。" },
+  "toolbarUnlocked": { "message": "FAPassword — 已连接并解锁。" },
+  "passwordActions": {
+    "message": "密码操作"
+  },
+  "openPasswords": {
+    "message": "打开 Apple 密码"
+  },
+  "generatePassword": {
+    "message": "生成强密码"
+  },
+  "generatedPassword": {
+    "message": "生成的密码"
+  },
+  "includeSpecialCharacters": {
+    "message": "包含特殊字符"
+  },
+  "passwordLength": {
+    "message": "长度"
+  },
+  "generatedPasswordHelp": {
+    "message": "点击“复制”将密码放入剪贴板。"
+  },
+  "copyPassword": {
+    "message": "复制"
+  },
+  "passwordCopied": {
+    "message": "密码已复制到剪贴板。"
+  },
+  "copyPasswordFailed": {
+    "message": "无法复制密码。"
+  },
+  "openingPasswords": {
+    "message": "正在打开 Apple 密码…"
+  },
+  "passwordAppOpened": {
+    "message": "Apple 密码已打开。"
+  },
+  "passwordOpenRequested": {
+    "message": "已请求打开；如浏览器询问，请确认。"
+  },
+  "passwordOpenModern": {
+    "message": "请在“自动填充与密码”中点击“打开密码”。"
+  },
+  "passwordSettingsOpened": {
+    "message": "无法启动“密码”App，正在打开密码设置。"
+  },
+  "passwordLaunchRetrySettings": {
+    "message": "无法打开 Apple 密码，请再次点击“打开 Apple 密码”尝试系统设置入口。"
+  },
+  "passwordOpenHelp": {
+    "message": "未能识别 macOS 版本，已在新标签页提供 Apple 的打开说明。"
+  },
+  "openPasswordsFailed": {
+    "message": "此浏览器无法打开 Apple 密码设置。"
+  },
+  "refreshPasswords": {
+    "message": "刷新密码"
+  },
+  "refreshingLogins": {
+    "message": "正在刷新账号…"
+  },
+  "status": {
+    "message": "状态"
+  },
+  "noHelperMessage": {
+    "message": "无法连接 Apple 密码辅助程序。需要 macOS 14 或更高版本、密码 App，并且扩展必须使用 Apple 接受的 ID。"
+  },
+  "pinMessage": {
+    "message": "输入 Mac 上的六位验证码。提示已关闭？点击下方获取新验证码。"
+  },
+  "verificationCode": {
+    "message": "验证码"
+  },
+  "unlock": {
+    "message": "解锁"
+  },
+  "requestNewCode": {
+    "message": "获取新验证码"
+  },
+  "requestingNewCode": {
+    "message": "正在获取新验证码…"
+  },
+  "newCodeReady": {
+    "message": "输入 Mac 上新的六位验证码。提示已关闭？可在下方重新获取。"
+  },
+  "connecting": {
+    "message": "正在连接 Apple 密码…"
+  },
+  "noLogins": {
+    "message": "此网站没有已保存的密码。"
+  },
+  "browserControls": {
+    "message": "浏览器控制"
+  },
+  "on": {
+    "message": "开"
+  },
+  "off": {
+    "message": "关"
+  },
+  "hideSaveBubble": {
+    "message": "隐藏保存密码提示"
+  },
+  "hidePasswordManager": {
+    "message": "禁用浏览器密码管理器"
+  },
+  "hideAddressAutofill": {
+    "message": "关闭地址自动填充"
+  },
+  "controlledByExtension": {
+    "message": "由其他扩展控制"
+  },
+  "controlledByPolicy": {
+    "message": "由浏览器策略控制"
+  },
+  "browserRefused": {
+    "message": "操作受限，请检查密码设置"
+  },
+  "policyHelperNeeded": {
+    "message": "安装助手：native/install.sh"
+  },
+  "policyHelperFailed": {
+    "message": "修复助手：native/install.sh"
+  },
+  "approveProfile": {
+    "message": "请在系统设置中批准描述文件"
+  },
+  "removeProfile": {
+    "message": "请在系统设置中移除描述文件"
+  },
+  "controlledElsewhere": {
+    "message": "由其他位置控制"
+  },
+  "autofillRefused": {
+    "message": "操作受限，请检查自动填充设置"
+  },
+  "pageUnavailable": {
+    "message": "FAPassword 无法在此页面运行。"
+  },
+  "loadFailed": {
+    "message": "无法加载登录账号。"
+  },
+  "fill": {
+    "message": "填充"
+  },
+  "fillFailed": {
+    "message": "无法填充此页面。"
+  },
+  "verificationFailed": {
+    "message": "验证失败。"
+  },
+  "enterNewCode": {
+    "message": "$ERROR$ — 请输入 Mac 上的新验证码",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "codeRequestFailed": {
+    "message": "无法获取验证码。"
+  },
+  "refilled": {
+    "message": "已使用最新密码重新填充 $USERNAME$",
+    "placeholders": {
+      "username": {
+        "content": "$1"
+      }
+    }
+  },
+  "passwordsRefreshed": {
+    "message": "账号列表已刷新。"
+  },
+  "noUsername": {
+    "message": "（无用户名）"
+  },
+  "suggestionsLabel": {
+    "message": "FAPassword 建议"
+  },
+  "openToUnlock": {
+    "message": "打开 FAPassword 进行解锁…"
+  },
+  "requestingCode": {
+    "message": "正在向 Mac 请求验证码…"
+  },
+  "completeUnlockInPopup": {
+    "message": "请在 FAPassword 弹窗中完成解锁"
+  },
+  "codeReadyClickToolbar": {
+    "message": "验证码已生成，请点击工具栏中的 FAPassword 图标输入"
+  },
+  "unlockFailed": {
+    "message": "无法开始解锁，请点击工具栏中的 FAPassword 图标重试"
+  },
+  "strongPassword": {
+    "message": "强密码"
+  },
+  "noSpecialCharacters": {
+    "message": "不含特殊字符"
+  },
+  "retry": {
+    "message": "重试"
+  },
+  "dismiss": {
+    "message": "关闭"
+  },
+  "cancelSave": {
+    "message": "取消请求"
+  },
+  "pendingSaves": {
+    "message": "密码保存请求"
+  },
+  "loadingLogins": {
+    "message": "正在加载账号…"
+  },
+  "filling": {
+    "message": "正在等待 Apple 密码…"
+  },
+  "verifying": {
+    "message": "正在验证…"
+  },
+  "stateUnlocked": {
+    "message": "Apple 密码已解锁"
+  },
+  "stateLocked": {
+    "message": "Apple 密码需要验证码"
+  },
+  "stateDisconnected": {
+    "message": "Apple 密码未连接"
+  },
+  "errorIncorrectCode": {
+    "message": "验证码不正确。"
+  },
+  "errorNewCode": {
+    "message": "请输入 Mac 上最新显示的验证码。"
+  },
+  "errorTimeout": {
+    "message": "请求超时，请重试。"
+  },
+  "errorLocked": {
+    "message": "会话已失效，请重新解锁 Apple 密码。"
+  },
+  "errorNoHelper": {
+    "message": "无法使用 Apple 密码辅助程序，请检查安装后重试。"
+  },
+  "errorConnection": {
+    "message": "Apple 密码连接已断开，请重试连接。"
+  },
+  "errorPageChanged": {
+    "message": "页面或选中的输入框已变化，请重新选择输入框后重试。"
+  },
+  "errorCancelled": {
+    "message": "请求已取消。"
+  },
+  "errorProtocol": {
+    "message": "辅助程序返回了无效响应，请重新连接后重试。"
+  },
+  "errorOperation": {
+    "message": "操作失败，请重试。"
+  },
+  "errorChooseField": {
+    "message": "请先在页面上选择可见的登录输入框。"
+  },
+  "errorPartialFill": {
+    "message": "无法安全填入密码，请检查输入框后重试。"
+  },
+  "errorPinLength": {
+    "message": "请输入完整的六位验证码。"
+  },
+  "errorPasswordConfirmation": {
+    "message": "新密码与确认密码不一致，尚未发起保存。"
+  },
+  "saveQueued": {
+    "message": "等待发送保存请求。"
+  },
+  "saveWaitingUnlock": {
+    "message": "请在三分钟内解锁 Apple 密码以发送保存请求。"
+  },
+  "saveSending": {
+    "message": "正在发送给 Apple 密码…"
+  },
+  "saveSubmitted": {
+    "message": "保存请求已发出，请完成 Mac 上的确认；尚未验证实际保存结果。"
+  },
+  "saveUncertain": {
+    "message": "请求是否送达尚不确定，请先检查 Apple 密码再重试。"
+  },
+  "saveFailed": {
+    "message": "保存请求失败，请在过期前重试，或取消请求。"
+  },
+  "saveExpired": {
+    "message": "请求已过期，暂存密码已清除；若尚未保存，请重新提交。"
+  },
+  "saveCancelled": {
+    "message": "待处理请求已取消；如 Mac 上仍有确认提示，请另行关闭。"
+  },
+  "saveUnchanged": {
+    "message": "凭据未变化，无需重复发起保存请求。"
+  },
+  "saveNoAccount": {
+    "message": "无法识别这次登录对应的账号。"
+  },
+  "refillComplete": {
+    "message": "已重新填充该账号。"
+  },
+  "fillAccount": {
+    "message": "填充 $USERNAME$",
+    "placeholders": {
+      "username": {
+        "content": "$1"
+      }
+    }
+  },
+  "refillAccount": {
+    "message": "重新填充 $HOST$ 上的 $USERNAME$",
+    "placeholders": {
+      "username": {
+        "content": "$1"
+      },
+      "host": {
+        "content": "$2"
+      }
+    }
+  },
+  "policyScope": {
+    "message": "仅影响 $BROWSER$。",
+    "placeholders": {
+      "browser": {
+        "content": "$1"
+      }
+    }
+  }
 }

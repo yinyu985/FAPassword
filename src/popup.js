@@ -1,4 +1,6 @@
-import { activeTab, normalizePin, pageContext } from "./shared.js";
+import { normalizePin } from "./shared.js";
+import "./password-generator.js";
+import { preparePasswordsLaunch, PASSWORDS_HELP_URL, PASSWORDS_MODERN_SETTINGS_URL } from './passwords-launch.js';
 
 const t = (name, substitutions) => chrome.i18n.getMessage(name, substitutions) || name;
 document.documentElement.lang = chrome.i18n.getUILanguage().replace("_", "-");
@@ -16,11 +18,25 @@ const views = {
 };
 const dot = document.getElementById("dot");
 const pinInput = document.getElementById("pin");
-const pinNote = document.getElementById("pin-note");
-const pinError = document.getElementById("pin-error");
+const statusMessage = document.getElementById("status-message");
 const refreshBtn = document.getElementById("refresh");
 const verifyBtn = document.getElementById("verify");
 const newCodeBtn = document.getElementById("newcode");
+const openPasswordsBtn = document.getElementById("open-passwords");
+let passwordsLaunchUrl = PASSWORDS_HELP_URL;
+let passwordsNativeLauncher = false;
+openPasswordsBtn.disabled = true;
+preparePasswordsLaunch(send).then(({ url, native }) => {
+  passwordsLaunchUrl = url;
+  passwordsNativeLauncher = native;
+  openPasswordsBtn.disabled = false;
+});
+const generatePasswordBtn = document.getElementById("generate-password");
+const generatedPasswordPanel = document.getElementById("generated-password-panel");
+const generatedPasswordInput = document.getElementById("generated-password");
+const copyGeneratedPasswordBtn = document.getElementById("copy-generated-password");
+const includeSpecialInput = document.getElementById("include-special");
+const passwordLengthInput = document.getElementById("password-length");
 
 function show(name) {
   for (const [k, el] of Object.entries(views)) el.hidden = k !== name;
@@ -80,28 +96,20 @@ const policyToggle = document.getElementById("policy-toggle");
 const policyNote = document.getElementById("policy-note");
 
 function policyMsg(action) {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendNativeMessage("com.fapassword.policy", { action }, (resp) => {
-        if (chrome.runtime.lastError) resolve({ error: chrome.runtime.lastError.message });
-        else resolve(resp || { error: "no reply" });
-      });
-    } catch (e) {
-      resolve({ error: String(e) });
-    }
-  });
+  return send({ type: "policy", action });
 }
 
 async function renderPolicyToggle() {
   const r = await policyMsg("get");
-  if (r.error || !r.ok) {
+  if (r.error || !r.ok || r.scopeVersion !== 2) {
     policyToggle.disabled = true;
     policyNote.textContent = t("policyHelperNeeded");
     return;
   }
-  policyToggle.disabled = false;
+  policyToggle.disabled = !!(r.managed && r.value === true);
+  document.getElementById("policy-scope").textContent = t("policyScope", r.browserName);
   policyToggle.checked = !!r.hidden;
-  policyNote.textContent = "";
+  policyNote.textContent = r.managed && r.value === true ? t("controlledByPolicy") : "";
 }
 
 policyToggle.addEventListener("change", async () => {
@@ -135,221 +143,329 @@ setupPrivacyToggle({
 });
 
 function setDot(state) {
-  dot.className = "dot";
-  if (state === "unlocked") dot.classList.add("ok");
-  else if (state === "needs_pin") dot.classList.add("warn");
-  else if (state === "no_helper") dot.classList.add("err");
+  dot.className = `dot ${state === "unlocked" ? "ok" : state === "needs_pin" ? "warn" : "err"}`;
+  const label = t(state === "unlocked" ? "stateUnlocked" : state === "needs_pin" ? "stateLocked" : "stateDisconnected");
+  dot.title = label; dot.setAttribute("aria-label", label);
 }
-
-function send(msg) {
+function send(message) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage(msg, (response) => {
+    chrome.runtime.sendMessage(message, (response) => {
       const error = chrome.runtime.lastError;
-      resolve(error ? { ok: false, error: error.message } : response);
+      resolve(error ? { ok: false, errorKey: "errorConnection" } : response || { ok: false, errorKey: "errorConnection" });
     });
   });
 }
-
-let lastState = "disconnected";
+const responseText = (response, fallback = "errorOperation") => t(response?.errorKey || fallback);
+let lastState = null;
 let renderSeq = 0;
+let pinOperation = null;
+let listOperation = null;
+let fillOperation = null;
+let loginResult = null;
+const refillBtn = document.getElementById("refill");
+const list = document.getElementById("logins");
 
-async function render(state) {
-  const seq = ++renderSeq;
+function updateControls() {
+  const busy = !!(listOperation || fillOperation);
+  refreshBtn.disabled = !!pinOperation || busy;
+  refreshBtn.classList.toggle("spinning", !!listOperation?.refresh);
+  refreshBtn.setAttribute("aria-busy", String(!!listOperation?.refresh));
+  list.setAttribute("aria-busy", String(busy));
+  for (const button of list.querySelectorAll("button")) button.disabled = busy || !loginResult?.targetId;
+  refillBtn.disabled = busy;
+}
+function setStatus(text = "", failed = false) {
+  // One shared live region below the active view; empty text occupies no space.
+  if (statusMessage.textContent !== text) statusMessage.textContent = text;
+  statusMessage.classList.toggle("failed", failed);
+}
+
+openPasswordsBtn.addEventListener("click", async () => {
+  if (openPasswordsBtn.disabled) return;
+  openPasswordsBtn.disabled = true;
+  if (passwordsNativeLauncher) {
+    try {
+      const result = await send({ type: "openPasswords" });
+      if (!result?.ok) throw new Error("Passwords launch failed");
+      setStatus(t(result.target === "app" ? "passwordOpenRequested" : "passwordSettingsOpened"));
+    } catch {
+      passwordsNativeLauncher = false;
+      // A new click preserves user activation for the browser-only fallback.
+      setStatus(t("passwordLaunchRetrySettings"), true);
+    } finally {
+      openPasswordsBtn.disabled = false;
+    }
+    return;
+  }
+  // Resolve the OS version before the click to preserve its user activation.
+  const link = document.createElement("a");
+  link.href = passwordsLaunchUrl;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.hidden = true;
+  document.body.appendChild(link);
+  try {
+    link.click();
+    // External protocols have no completion callback; never claim the app opened.
+    setStatus(t(passwordsLaunchUrl === PASSWORDS_MODERN_SETTINGS_URL ? "passwordOpenModern" :
+      passwordsLaunchUrl === PASSWORDS_HELP_URL ? "passwordOpenHelp" : "passwordOpenRequested"));
+  } catch {
+    setStatus(t("openPasswordsFailed"), true);
+  } finally {
+    link.remove();
+    openPasswordsBtn.disabled = false;
+  }
+});
+
+generatePasswordBtn.addEventListener("click", () => {
+  const length = Math.min(64, Math.max(8, Number.parseInt(passwordLengthInput.value, 10) || 20));
+  passwordLengthInput.value = String(length);
+  generatedPasswordInput.value = globalThis.FAPASSWORD_PASSWORDS.custom(length, includeSpecialInput.checked);
+  generatedPasswordPanel.hidden = false;
+  setStatus();
+  generatedPasswordInput.focus();
+  generatedPasswordInput.select();
+});
+
+copyGeneratedPasswordBtn.addEventListener("click", async () => {
+  const password = generatedPasswordInput.value;
+  if (!password) return;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(password);
+    else {
+      generatedPasswordInput.focus();
+      generatedPasswordInput.select();
+      if (!document.execCommand("copy")) throw new Error("copy failed");
+    }
+    setStatus(t("passwordCopied"));
+  } catch {
+    setStatus(t("copyPasswordFailed"), true);
+  }
+});
+
+function pinBusy(operation) {
+  pinOperation = operation;
+  pinInput.disabled = verifyBtn.disabled = newCodeBtn.disabled = !!operation;
+  updateControls();
+  views.pin.setAttribute("aria-busy", String(!!operation));
+}
+function setPinStatus(text = t("pinMessage"), failed = false) {
+  setStatus(text, failed);
+  pinInput.setAttribute("aria-invalid", String(failed));
+}
+function render(state) {
+  if (state === lastState) return;
   lastState = state;
+  const seq = ++renderSeq;
+  listOperation = fillOperation = loginResult = null;
+  list.replaceChildren();
+  setStatus();
+  updateControls();
   setDot(state);
-  refreshBtn.hidden = state !== "unlocked" && state !== "needs_pin";
-  if (state === "no_helper") return show("nohelper");
-  if (state === "disconnected") return show("connecting");
+  refreshBtn.hidden = !["unlocked", "needs_pin"].includes(state);
+  if (state !== "needs_pin") { pinInput.value = ""; pinInput.setAttribute("aria-invalid", "false"); }
+  if (state === "no_helper") { setStatus(t("noHelperMessage"), true); return show("nohelper"); }
+  if (state === "disconnected") {
+    show("connecting");
+    setStatus(t("errorConnection"), true);
+    return;
+  }
   if (state === "needs_pin") {
     show("pin");
-    pinInput.focus();
+    setPinStatus(t(pinOperation === "request" ? "requestingCode" : pinOperation === "verify" ? "verifying" : "pinMessage"));
+    if (!pinOperation) pinInput.focus();
     return;
   }
-  if (state === "unlocked") {
-    await renderLogins(seq);
-    if (seq !== renderSeq) return;
-    return show("unlocked");
-  }
-  // unknown state must never leave every view hidden (blank popup)
+  if (state === "unlocked") { show("unlocked"); renderLogins(seq); return; }
   show("connecting");
+  setStatus(t("connecting"));
+}
+function accountRow(login) {
+  const item = document.createElement("li");
+  item.accountName = login.username;
+  const username = document.createElement("span");
+  username.className = "u"; username.textContent = login.username || t("noUsername"); username.title = username.textContent;
+  const fill = document.createElement("button");
+  fill.textContent = t("fill"); fill.setAttribute("aria-label", t("fillAccount", username.textContent));
+  fill.addEventListener("click", async () => {
+    if (listOperation || fillOperation || !loginResult?.targetId) return;
+    const operation = fillOperation = { seq: renderSeq };
+    updateControls(); setStatus(t("filling"));
+    try {
+      const response = await send({ type: "fillOnPage", targetId: loginResult.targetId, loginName: login });
+      if (operation !== fillOperation) return;
+      if (response.ok && response.filled) window.close();
+      else setStatus(responseText(response, "fillFailed"), true);
+    } finally {
+      if (operation === fillOperation) { fillOperation = null; updateControls(); }
+    }
+  });
+  item.append(username, fill);
+  return item;
 }
 
-async function renderLogins(seq = renderSeq) {
-  const tab = await activeTab();
-  const list = document.getElementById("logins");
-  const none = document.getElementById("nologins");
-  list.innerHTML = "";
-  none.hidden = true;
-
-  const context = tab?.url ? pageContext(tab.url) : null;
-  document.getElementById("site").textContent = context?.host || "";
-  if (tab?.id == null || !context || !["http:", "https:"].includes(context.url.protocol)) {
-    none.textContent = t("pageUnavailable");
-    none.hidden = false;
-    return;
+function renderLogins(seq = renderSeq, refresh = false) {
+  if (listOperation?.seq === seq) return listOperation.promise;
+  const operation = listOperation = { seq, refresh };
+  updateControls();
+  if (!loginResult && !refresh) {
+    setStatus(t("loadingLogins"));
+    refillBtn.hidden = true;
   }
-
-  const res = await send({ type: "getLogins" });
-  if (seq !== renderSeq) return;
-  if (!res?.ok) {
-    none.hidden = false;
-    none.textContent = res?.error ?? t("loadFailed");
-    return;
-  }
-  if (!res.logins.length) {
-    none.hidden = false;
-    return;
-  }
-  for (const login of res.logins) {
-    const li = document.createElement("li");
-    const u = document.createElement("span");
-    u.className = "u";
-    u.textContent = login.username || t("noUsername");
-    u.title = login.username || t("noUsername");
-    const fill = document.createElement("button");
-    fill.textContent = t("fill");
-    fill.addEventListener("click", async () => {
-      fill.disabled = true;
-      const r = await send({ type: "fillOnPage", loginName: login });
-      if (r?.ok && r.filled) window.close();
-      else {
-        fill.disabled = false;
-        none.textContent = r?.error || t("fillFailed");
-        none.hidden = false;
+  if (refresh) setStatus(t("refreshingLogins"));
+  operation.promise = (async () => {
+    try {
+      const invalidated = refresh ? await send({ type: "refreshLogins" }) : { ok: true };
+      const result = invalidated.ok ? await send({ type: "getLogins" }) : invalidated;
+      if (operation !== listOperation || seq !== renderSeq || lastState !== "unlocked") return false;
+      if (!result.ok) {
+        setStatus(responseText(result, "loadFailed"), true);
+        return false;
       }
-    });
-    li.append(u, fill);
-    list.appendChild(li);
-  }
+      loginResult = result;
+      const site = document.getElementById("site");
+      if (site.textContent !== result.host) site.textContent = result.host || "";
+      refillBtn.hidden = !result.refill;
+      if (result.refill) refillBtn.textContent = t("refillAccount", [result.refill.username || t("noUsername"), result.refill.host]);
+      const existing = new Map([...list.children].map((item) => [item.accountName, item]));
+      const rows = result.logins.map((login) => existing.get(login.username) || accountRow(login));
+      if (rows.length !== list.children.length || rows.some((row, index) => row !== list.children[index])) {
+        list.replaceChildren(...rows);
+      }
+      for (const button of list.querySelectorAll("button")) button.title = result.targetId ? "" : t("errorChooseField");
+      setStatus(!result.logins.length ? t("noLogins") : refresh ? t("passwordsRefreshed") : "");
+      return true;
+    } finally {
+      if (operation === listOperation) { listOperation = null; updateControls(); }
+    }
+  })();
+  return operation.promise;
 }
-
-let verifyingPin = false;
-
 async function verifyPin() {
-  if (verifyingPin) return;
-  pinNote.hidden = true;
-  pinError.hidden = true;
+  if (pinOperation) return;
   const pin = normalizePin(pinInput.value);
   pinInput.value = pin;
-  if (pin.length !== 6) return;
-  verifyingPin = true;
-  verifyBtn.disabled = true;
-  newCodeBtn.disabled = true;
-  const res = await send({ type: "verifyPin", pin });
-  verifyingPin = false;
-  verifyBtn.disabled = false;
-  newCodeBtn.disabled = false;
-  if (res?.ok) render(res.state);
-  else {
-    // a failed attempt spends the code, so the background put a fresh one on the Mac
-    const base = res?.error ?? t("verificationFailed");
-    pinError.textContent = res?.newCode ? t("enterNewCode", base) : base;
-    pinError.hidden = false;
-    pinInput.value = "";
-    pinInput.focus();
-  }
-}
-
-verifyBtn.addEventListener("click", verifyPin);
-
-pinInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") verifyPin();
-});
-pinInput.addEventListener("paste", (e) => {
-  const text = e.clipboardData?.getData("text");
-  if (text == null) return;
-  // Normalize before maxlength can truncate formatted OCR text such as
-  // "123 456" or a value with a trailing newline/invisible character.
-  e.preventDefault();
-  pinInput.value = normalizePin(text);
-  if (pinInput.value.length === 6) verifyPin();
-});
-// auto-submit once all 6 digits are in, like apple - no Enter needed
-pinInput.addEventListener("input", () => {
-  const pin = normalizePin(pinInput.value);
-  if (pinInput.value !== pin) pinInput.value = pin;
-  if (pin.length === 6) verifyPin();
-});
-
-let noteTimer = null;
-function flashNote(text) {
-  const el = document.getElementById("refresh-note");
-  el.textContent = text;
-  el.hidden = false;
-  clearTimeout(noteTimer);
-  noteTimer = setTimeout(() => (el.hidden = true), 2500);
-}
-
-let requestingNewCode = false;
-async function requestNewCode() {
-  if (requestingNewCode || verifyingPin) return;
-  requestingNewCode = true;
-  pinNote.hidden = true;
-  pinError.hidden = true;
-  pinInput.value = "";
-  newCodeBtn.disabled = true;
-  newCodeBtn.setAttribute("aria-busy", "true");
-  newCodeBtn.textContent = t("requestingNewCode");
-
+  if (pin.length !== 6) { setPinStatus(t("errorPinLength"), true); return; }
+  setPinStatus(t("verifying"));
+  pinBusy("verify");
   try {
-    const res = await send({ type: "requestChallenge" });
-    if (!res?.ok || !res.hasChallenge) {
-      pinError.textContent = res?.error ?? t("codeRequestFailed");
-      pinError.hidden = false;
+    const response = await send({ type: "verifyPin", pin });
+    pinInput.value = "";
+    if (response.ok) render(response.state);
+    else {
+      setPinStatus(response.newCode ? t("enterNewCode", responseText(response, "verificationFailed")) : responseText(response, "verificationFailed"), true);
+      if (response.state && response.state !== "needs_pin") render(response.state);
+    }
+  } finally { pinBusy(null); if (lastState === "needs_pin") pinInput.focus(); }
+}
+async function requestNewCode(ifNeeded = false) {
+  if (pinOperation) return;
+  pinInput.value = "";
+  setPinStatus(t("requestingCode"));
+  pinBusy("request");
+  try {
+    const response = await send({ type: "requestChallenge", ifNeeded });
+    if (!response.ok || !response.hasChallenge) {
+      setPinStatus(responseText(response, "codeRequestFailed"), true);
+      if (response.state && response.state !== "needs_pin") render(response.state);
       return;
     }
-    await render(res.state);
-    pinNote.textContent = t("newCodeReady");
-    pinNote.hidden = false;
-    pinInput.focus();
-  } catch (error) {
-    pinError.textContent = String(error?.message ?? error ?? t("codeRequestFailed"));
-    pinError.hidden = false;
-  } finally {
-    requestingNewCode = false;
-    newCodeBtn.disabled = false;
-    newCodeBtn.removeAttribute("aria-busy");
-    newCodeBtn.textContent = t("requestNewCode");
+    render(response.state);
+    if (lastState === "needs_pin") setPinStatus(t(response.issued ? "newCodeReady" : "pinMessage"));
+  } finally { pinBusy(null); if (lastState === "needs_pin") pinInput.focus(); }
+}
+verifyBtn.addEventListener("click", verifyPin);
+newCodeBtn.addEventListener("click", () => requestNewCode());
+pinInput.addEventListener("keydown", (event) => { if (event.key === "Enter") verifyPin(); });
+pinInput.addEventListener("paste", (event) => {
+  if (pinOperation) return;
+  const text = event.clipboardData?.getData("text");
+  if (text == null) return;
+  event.preventDefault(); pinInput.value = normalizePin(text);
+  if (pinInput.value.length === 6) verifyPin();
+});
+pinInput.addEventListener("input", () => {
+  if (pinOperation) return;
+  pinInput.value = normalizePin(pinInput.value);
+  if (pinInput.value.length === 6) verifyPin();
+});
+refreshBtn.addEventListener("click", async () => {
+  if (pinOperation || listOperation || fillOperation) return;
+  if (lastState === "needs_pin") await requestNewCode();
+  else if (lastState === "unlocked") await renderLogins(renderSeq, true);
+});
+refillBtn.addEventListener("click", async () => {
+  if (listOperation || fillOperation) return;
+  const operation = fillOperation = { seq: renderSeq };
+  updateControls(); setStatus(t("filling"));
+  try {
+    const result = await send({ type: "refillOnPage" });
+    if (operation !== fillOperation) return;
+    const success = result.ok && result.filled;
+    setStatus(success ? t("refillComplete") : responseText(result, "fillFailed"), !success);
+  } finally { if (operation === fillOperation) { fillOperation = null; updateControls(); } }
+});
+
+let savesSignature = "";
+function renderSaves(saves = []) {
+  const signature = JSON.stringify([lastState, saves]);
+  if (signature === savesSignature) return;
+  savesSignature = signature;
+  const section = document.getElementById("pending-saves");
+  const list = document.getElementById("save-list");
+  list.replaceChildren(); section.hidden = !saves.length;
+  for (const save of saves) {
+    const item = document.createElement("li");
+    const text = document.createElement("p");
+    text.textContent = `${save.host} · ${save.username || t("noUsername")} — ${t(save.messageKey || "saveQueued")}`;
+    item.appendChild(text);
+    if (["queued", "failed", "uncertain"].includes(save.status)) {
+      const retry = document.createElement("button");
+      retry.textContent = t(lastState === "unlocked" ? "retry" : "unlock");
+      retry.addEventListener("click", async () => {
+        retry.disabled = true;
+        if (lastState !== "unlocked") await connectAndRender();
+        const result = await send({ type: "retrySave", saveId: save.id });
+        if (result.saves) renderSaves(result.saves);
+      });
+      item.appendChild(retry);
+    }
+    const cancel = document.createElement("button");
+    cancel.textContent = t(["submitted", "skipped", "expired", "cancelled"].includes(save.status) ? "dismiss" : "cancelSave");
+    cancel.addEventListener("click", async () => { const result = await send({ type: "cancelSave", saveId: save.id }); renderSaves(result.saves); });
+    item.appendChild(cancel); list.appendChild(item);
   }
 }
-
-refreshBtn.addEventListener("click", async () => {
-  refreshBtn.disabled = true;
-  refreshBtn.classList.add("spinning");
-  if (lastState === "needs_pin") {
-    // locked: refresh means "get me a fresh code on the mac"
-    await requestNewCode();
-  } else {
-    // unlocked: drop cached passwords, re-fill the page with a fresh read (a password just
-    // changed in the Passwords app lands without re-clicking Fill), then re-list
-    const r = await send({ type: "refreshAndRefill" });
-    await renderLogins();
-    if (r?.refilled) flashNote(t("refilled", r.username));
-    else flashNote(t("passwordsRefreshed"));
+let connecting = false;
+async function connectAndRender() {
+  if (connecting) return;
+  connecting = true;
+  for (const button of document.querySelectorAll(".retry-connection")) button.disabled = true;
+  try {
+    const response = await send({ type: "retryConnection" });
+    render(response.state || "disconnected"); renderSaves(response.saves);
+    if (response.state === "needs_pin") await requestNewCode(true);
+    else if (response.errorKey) setStatus(responseText(response), true);
+  } finally {
+    connecting = false;
+    for (const button of document.querySelectorAll(".retry-connection")) button.disabled = false;
   }
-  refreshBtn.classList.remove("spinning");
-  refreshBtn.disabled = false;
-});
-
-newCodeBtn.addEventListener("click", requestNewCode);
-
-const statePort = chrome.runtime.connect({ name: "fapassword-popup" });
-statePort.onMessage.addListener((msg) => {
-  if (msg?.type === "state") render(msg.state);
-});
-
-(async () => {
-  const res = await send({ type: "getState" });
-  let state = res?.state ?? "disconnected";
-  if (state === "needs_pin") {
-    // trigger the macOS access prompt, but never on top of a code thats already showing
-    // (the inline box may have just asked for one) - a second prompt kills the first code
-    const ch = await send({ type: "requestChallenge", ifNeeded: true });
-    state = ch?.state ?? state;
-    if (!ch?.ok) {
-      pinError.textContent = ch?.error || t("codeRequestFailed");
-      pinError.hidden = false;
-    }
-  }
-  render(state);
-})();
+}
+for (const button of document.querySelectorAll(".retry-connection")) button.addEventListener("click", connectAndRender);
+let statePort;
+let reconnectTimer;
+function attachStatePort() {
+  statePort = chrome.runtime.connect({ name: "fapassword-popup" });
+  statePort.onMessage.addListener((message) => {
+    if (message?.type !== "state") return;
+    render(message.state); renderSaves(message.saves);
+  });
+  statePort.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    render("disconnected");
+    reconnectTimer = setTimeout(attachStatePort, 1000);
+  });
+}
+window.addEventListener("pagehide", () => { clearTimeout(reconnectTimer); pinInput.value = ""; });
+attachStatePort();
+connectAndRender();

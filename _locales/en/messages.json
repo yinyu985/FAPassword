@@ -1,49 +1,347 @@
 {
-  "extensionName": { "message": "FAPassword" },
-  "extensionDescription": { "message": "An unofficial Apple Passwords client for Chromium—because Apple's extension sucks." },
-  "openPopupCommand": { "message": "Open FAPassword" },
-  "refreshPasswords": { "message": "Refresh passwords" },
-  "status": { "message": "Status" },
-  "noHelperMessage": { "message": "Couldn't reach Apple's password helper. This needs macOS 14+ with the Passwords app, and the extension must run with Apple's accepted ID." },
-  "pinMessage": { "message": "A verification code was generated on your Mac. Enter it to grant access." },
-  "verificationCode": { "message": "Verification code" },
-  "unlock": { "message": "Unlock" },
-  "requestNewCode": { "message": "Request a new code" },
-  "requestingNewCode": { "message": "Requesting a new code…" },
-  "newCodeReady": { "message": "New code ready — enter the code now shown on your Mac." },
-  "connecting": { "message": "Connecting to Apple Passwords…" },
-  "noLogins": { "message": "No saved passwords for this site." },
-  "browserControls": { "message": "Browser controls" },
-  "on": { "message": "On" },
-  "off": { "message": "Off" },
-  "hideSaveBubble": { "message": "Hide browser save-password bubble" },
-  "hidePasswordManager": { "message": "Hide browser password manager entirely" },
-  "hideAddressAutofill": { "message": "Hide browser autofill suggestions" },
-  "controlledByExtension": { "message": "controlled by another extension" },
-  "controlledByPolicy": { "message": "controlled by browser policy" },
-  "browserRefused": { "message": "browser refused it — change it in password settings" },
-  "policyHelperNeeded": { "message": "needs the policy helper — run native/install.sh" },
-  "policyHelperFailed": { "message": "helper failed — run native/install.sh" },
-  "approveProfile": { "message": "approve the profile in System Settings, then reopen this popup" },
-  "removeProfile": { "message": "remove the profile in System Settings, then reopen this popup" },
-  "controlledElsewhere": { "message": "controlled elsewhere" },
-  "autofillRefused": { "message": "browser refused it — change it in autofill settings" },
-  "pageUnavailable": { "message": "FAPassword can't run on this page." },
-  "loadFailed": { "message": "Couldn't load logins." },
-  "fill": { "message": "Fill" },
-  "fillFailed": { "message": "Couldn't fill this page." },
-  "verificationFailed": { "message": "Verification failed." },
-  "enterNewCode": { "message": "$ERROR$ — enter the new code on your Mac", "placeholders": { "error": { "content": "$1" } } },
-  "codeRequestFailed": { "message": "Couldn't request a code." },
-  "refilled": { "message": "Re-filled $USERNAME$ with the latest password", "placeholders": { "username": { "content": "$1" } } },
-  "passwordsRefreshed": { "message": "Passwords refreshed" },
-  "noUsername": { "message": "(no username)" },
-  "suggestionsLabel": { "message": "FAPassword suggestions" },
-  "openToUnlock": { "message": "Open FAPassword to unlock…" },
-  "requestingCode": { "message": "Requesting a code from your Mac…" },
-  "completeUnlockInPopup": { "message": "Complete unlocking in the FAPassword popup" },
-  "codeReadyClickToolbar": { "message": "Code ready — click the FAPassword toolbar icon to enter it" },
-  "unlockFailed": { "message": "Couldn't start unlocking — click the FAPassword toolbar icon to retry" },
-  "strongPassword": { "message": "Strong Password" },
-  "noSpecialCharacters": { "message": "Without Special Characters" }
+  "extensionName": {
+    "message": "FAPassword"
+  },
+  "extensionDescription": {
+    "message": "An unofficial Apple Passwords client for Chromium—because Apple's extension sucks."
+  },
+  "openPopupCommand": {
+    "message": "Open FAPassword"
+  },
+  "toolbarConnecting": { "message": "FAPassword — Connecting to Apple Passwords…" },
+  "toolbarDisconnected": { "message": "FAPassword — Connection failed. Open to retry." },
+  "toolbarNoHelper": { "message": "FAPassword — Apple Passwords helper unavailable. Open for details." },
+  "toolbarLocked": { "message": "FAPassword — Locked. Open to unlock Apple Passwords." },
+  "toolbarUnlocked": { "message": "FAPassword — Connected and unlocked." },
+  "passwordActions": {
+    "message": "Password actions"
+  },
+  "openPasswords": {
+    "message": "Open Apple Passwords"
+  },
+  "generatePassword": {
+    "message": "Generate password"
+  },
+  "generatedPassword": {
+    "message": "Generated password"
+  },
+  "includeSpecialCharacters": {
+    "message": "Include special characters"
+  },
+  "passwordLength": {
+    "message": "Length"
+  },
+  "generatedPasswordHelp": {
+    "message": "Use Copy to place it in the clipboard."
+  },
+  "copyPassword": {
+    "message": "Copy"
+  },
+  "passwordCopied": {
+    "message": "Password copied to the clipboard."
+  },
+  "copyPasswordFailed": {
+    "message": "Could not copy the password."
+  },
+  "openingPasswords": {
+    "message": "Opening Apple Passwords…"
+  },
+  "passwordAppOpened": {
+    "message": "Apple Passwords opened."
+  },
+  "passwordOpenRequested": {
+    "message": "Opening requested. Approve the browser prompt if shown."
+  },
+  "passwordOpenModern": {
+    "message": "In AutoFill & Passwords, choose Open Passwords."
+  },
+  "passwordSettingsOpened": {
+    "message": "Could not launch the Passwords app. Opening password settings instead."
+  },
+  "passwordLaunchRetrySettings": {
+    "message": "Could not open Apple Passwords. Click Open Apple Passwords again to try System Settings."
+  },
+  "passwordOpenHelp": {
+    "message": "Could not determine your macOS version. Apple's opening instructions are available in the new tab."
+  },
+  "openPasswordsFailed": {
+    "message": "Could not open Apple Passwords settings from this browser."
+  },
+  "refreshPasswords": {
+    "message": "Refresh passwords"
+  },
+  "refreshingLogins": {
+    "message": "Refreshing accounts…"
+  },
+  "status": {
+    "message": "Status"
+  },
+  "noHelperMessage": {
+    "message": "Couldn't reach Apple's password helper. This needs macOS 14+ with the Passwords app, and the extension must run with Apple's accepted ID."
+  },
+  "pinMessage": {
+    "message": "Enter your Mac’s six-digit code. Dismissed it? Request a new code below."
+  },
+  "verificationCode": {
+    "message": "Verification code"
+  },
+  "unlock": {
+    "message": "Unlock"
+  },
+  "requestNewCode": {
+    "message": "Request a new code"
+  },
+  "requestingNewCode": {
+    "message": "Requesting a new code…"
+  },
+  "newCodeReady": {
+    "message": "Enter your Mac’s new six-digit code. Dismissed it? Request another below."
+  },
+  "connecting": {
+    "message": "Connecting to Apple Passwords…"
+  },
+  "noLogins": {
+    "message": "No saved passwords for this site."
+  },
+  "browserControls": {
+    "message": "Browser controls"
+  },
+  "on": {
+    "message": "On"
+  },
+  "off": {
+    "message": "Off"
+  },
+  "hideSaveBubble": {
+    "message": "Hide password save prompts"
+  },
+  "hidePasswordManager": {
+    "message": "Disable password manager"
+  },
+  "hideAddressAutofill": {
+    "message": "Disable address autofill"
+  },
+  "controlledByExtension": {
+    "message": "Controlled by another extension"
+  },
+  "controlledByPolicy": {
+    "message": "Controlled by browser policy"
+  },
+  "browserRefused": {
+    "message": "Blocked; check password settings"
+  },
+  "policyHelperNeeded": {
+    "message": "Install helper: native/install.sh"
+  },
+  "policyHelperFailed": {
+    "message": "Repair helper: native/install.sh"
+  },
+  "approveProfile": {
+    "message": "Approve profile in System Settings"
+  },
+  "removeProfile": {
+    "message": "Remove profile in System Settings"
+  },
+  "controlledElsewhere": {
+    "message": "controlled elsewhere"
+  },
+  "autofillRefused": {
+    "message": "Blocked; check autofill settings"
+  },
+  "pageUnavailable": {
+    "message": "FAPassword can't run on this page."
+  },
+  "loadFailed": {
+    "message": "Couldn't load logins."
+  },
+  "fill": {
+    "message": "Fill"
+  },
+  "fillFailed": {
+    "message": "Couldn't fill this page."
+  },
+  "verificationFailed": {
+    "message": "Verification failed."
+  },
+  "enterNewCode": {
+    "message": "$ERROR$ — enter the new code on your Mac",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "codeRequestFailed": {
+    "message": "Couldn't request a code."
+  },
+  "refilled": {
+    "message": "Re-filled $USERNAME$ with the latest password",
+    "placeholders": {
+      "username": {
+        "content": "$1"
+      }
+    }
+  },
+  "passwordsRefreshed": {
+    "message": "Account list refreshed."
+  },
+  "noUsername": {
+    "message": "(no username)"
+  },
+  "suggestionsLabel": {
+    "message": "FAPassword suggestions"
+  },
+  "openToUnlock": {
+    "message": "Open FAPassword to unlock…"
+  },
+  "requestingCode": {
+    "message": "Requesting a code from your Mac…"
+  },
+  "completeUnlockInPopup": {
+    "message": "Complete unlocking in the FAPassword popup"
+  },
+  "codeReadyClickToolbar": {
+    "message": "Code ready — click the FAPassword toolbar icon to enter it"
+  },
+  "unlockFailed": {
+    "message": "Couldn't start unlocking — click the FAPassword toolbar icon to retry"
+  },
+  "strongPassword": {
+    "message": "Strong Password"
+  },
+  "noSpecialCharacters": {
+    "message": "Without Special Characters"
+  },
+  "retry": {
+    "message": "Retry"
+  },
+  "dismiss": {
+    "message": "Dismiss"
+  },
+  "cancelSave": {
+    "message": "Cancel request"
+  },
+  "pendingSaves": {
+    "message": "Password save requests"
+  },
+  "loadingLogins": {
+    "message": "Loading accounts…"
+  },
+  "filling": {
+    "message": "Waiting for Apple Passwords…"
+  },
+  "verifying": {
+    "message": "Verifying…"
+  },
+  "stateUnlocked": {
+    "message": "Apple Passwords is unlocked"
+  },
+  "stateLocked": {
+    "message": "Apple Passwords needs a verification code"
+  },
+  "stateDisconnected": {
+    "message": "Apple Passwords is disconnected"
+  },
+  "errorIncorrectCode": {
+    "message": "The code is incorrect."
+  },
+  "errorNewCode": {
+    "message": "Enter the newest code shown on your Mac."
+  },
+  "errorTimeout": {
+    "message": "The request timed out. Please try again."
+  },
+  "errorLocked": {
+    "message": "The session expired. Unlock Apple Passwords again."
+  },
+  "errorNoHelper": {
+    "message": "The Apple Passwords helper is unavailable. Check the installation and retry."
+  },
+  "errorConnection": {
+    "message": "Apple Passwords is disconnected. Retry to reconnect."
+  },
+  "errorPageChanged": {
+    "message": "The page or selected field changed. Select the field and try again."
+  },
+  "errorCancelled": {
+    "message": "The request was cancelled."
+  },
+  "errorProtocol": {
+    "message": "The helper returned an invalid response. Reconnect and try again."
+  },
+  "errorOperation": {
+    "message": "The operation failed. Please try again."
+  },
+  "errorChooseField": {
+    "message": "Select a visible login field on the page first."
+  },
+  "errorPartialFill": {
+    "message": "The password could not be filled safely. Check the fields and try again."
+  },
+  "errorPinLength": {
+    "message": "Enter all 6 digits."
+  },
+  "errorPasswordConfirmation": {
+    "message": "The new password and confirmation do not match. Nothing was offered for saving."
+  },
+  "saveQueued": {
+    "message": "Waiting to send the save request."
+  },
+  "saveWaitingUnlock": {
+    "message": "Unlock Apple Passwords within 3 minutes to send this save request."
+  },
+  "saveSending": {
+    "message": "Sending to Apple Passwords…"
+  },
+  "saveSubmitted": {
+    "message": "Save request sent. Complete any confirmation on your Mac; saving is not yet verified."
+  },
+  "saveUncertain": {
+    "message": "Could not confirm request delivery. Check Apple Passwords before retrying."
+  },
+  "saveFailed": {
+    "message": "The save request failed. Retry before it expires, or cancel it."
+  },
+  "saveExpired": {
+    "message": "The request expired and its password was discarded. Submit again if it was not saved."
+  },
+  "saveCancelled": {
+    "message": "The pending request was cancelled. Dismiss any remaining Mac confirmation separately."
+  },
+  "saveUnchanged": {
+    "message": "No new save request is needed for these unchanged credentials."
+  },
+  "saveNoAccount": {
+    "message": "No account could be identified for this login."
+  },
+  "refillComplete": {
+    "message": "The selected account was filled again."
+  },
+  "fillAccount": {
+    "message": "Fill $USERNAME$",
+    "placeholders": {
+      "username": {
+        "content": "$1"
+      }
+    }
+  },
+  "refillAccount": {
+    "message": "Fill $USERNAME$ on $HOST$ again",
+    "placeholders": {
+      "username": {
+        "content": "$1"
+      },
+      "host": {
+        "content": "$2"
+      }
+    }
+  },
+  "policyScope": {
+    "message": "Applies only to $BROWSER$.",
+    "placeholders": {
+      "browser": {
+        "content": "$1"
+      }
+    }
+  }
 }

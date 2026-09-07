@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAPassword · 真实保存验收</title>
+<style>
+body{max-width:660px;margin:48px auto;padding:0 20px;font:16px/1.6 system-ui;color:#202421;background:#f4f5f2}
+label{display:block;margin:12px 0}input,button{font:inherit;padding:8px;border:1px solid #aeb4af;border-radius:2px}
+input{display:block;width:100%;box-sizing:border-box}button{cursor:pointer;margin:4px 6px 4px 0}form{padding:20px;border:1px solid #aeb4af}
+small{display:block}#result{min-height:2em}code{overflow-wrap:anywhere}
+</style>
+<h1>真实 Apple 密码保存测试</h1>
+<p>仅使用本页生成的虚构账号。页面不联网提交密码，不模拟扩展或 Apple 助手。</p>
+<p>在 Apple 密码中搜索 <strong>localhost</strong>，核对用户名：<code id="account"></code></p>
+<div>
+<button id="new" type="button">准备首次保存</button>
+<button id="update" type="button">准备更新密码</button>
+<button id="clear" type="button">清空，等待扩展填充</button>
+<button id="check" type="button">核对回填结果</button>
+</div>
+<form id="login" action="/live-save.html" method="post">
+<label>用户名<input id="username" name="username" autocomplete="username" required></label>
+<label>密码<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+<button type="submit">登录并触发保存请求</button>
+</form>
+<p id="result" role="status">先点击“准备首次保存”，再点击登录。系统确认由你操作。</p>
+<small>提交成功仅表示本测试页收到提交，不代表 Apple 已保存。核对回填前，在扩展中刷新缓存，选本测试账号填充；也可直接到系统密码界面检查。</small>
+<script src="live-save.js"></script>
+</html>
