@@ -1,60 +1,198 @@
-# Verification and audit log
+# 修复与复查记录
 
-This extension went through independent audits (protocol correctness, security, and
-a real-world complaint study), and the findings were resolved. This log records
-them, including a mistake in the original "100/100 passing" claim.
+## 打开 Apple 密码兼容修复（2026-09-07）
 
-## Correction to the original test
+打开按钮会先探测本机助手能力；支持时通过固定的 `/usr/bin/open -b com.apple.Passwords` 启动独立 App，失败或超时后按实际 macOS 版本回退到密码设置。旧版或缺失助手保留浏览器设置链接。只有扩展自己的 popup 可以发送启动请求，网页不能触发，也不能传入任意命令或 URL。
 
-The first crypto test reported "100/100 handshakes pass." That test was
-self-consistent but wrong: it ran the client against a server simulation that used
-the same corrupted group prime and the same IV framing, so both sides agreed while
-both were non-standard. The audit caught two real bugs the test couldn't, because
-it never compared against the RFC or the helper's actual reply format. The test was
-rewritten to assert the prime equals the canonical RFC 5054 value and to decrypt a
-response framed the way the helper frames it (IV-first), not the way requests are
-framed.
+`npm run build`、`npm run check`、`npm test`、`npm run test:native` 全部通过。本机助手 14 项测试包含启动成功、新旧系统回退、超时、两次启动均失败和能力探测无副作用；JavaScript 回归覆盖缺失／旧版助手、不可用系统版本、消息来源限制和固定目标。本机 macOS 15.7.7 调用生产启动函数返回 `target: app`，并确认 Passwords.app 进程运行。已为本机 Helium 安装更新后的助手，根目录与 dist 构建同步完成；尚未重启用户浏览器或实测其工具栏按钮，新旧系统回退由模拟测试覆盖。
 
-## Critical fixes
+本轮范围为用户保留的 50 项审查意见，沿用原编号。代码和自动测试的通过，不等于真实 Apple 助手、VoiceOver 或所有系统／浏览器组合已经验收。本文件取代先前笼统的“问题均已解决”声明。
 
-| # | Issue | Resolution |
+## 工具栏连接图标（2026-09-07）
+
+**当前规则：未验证成功一律红底，验证成功才白底。** 用户再次指出未成功连接时仍应有红底提醒；此前把助手端口连通、但仍等待验证码的 `needs_pin` 当成成功，提前切回白底。现只在 `unlocked` 显示白底，其余状态均红底；待验证的中英文悬停文字也不再宣称已连接成功。Helium 独立临时 profile 中运行实际后台和真实图标 API，已验证启动、待验证码、错误验证码保持红底，正确验证码后恢复三个尺寸的白底；重新验证、断连及重连待验证恢复／保持红底，再次验证成功才白底。构建、静态检查、完整单元回归及该浏览器回归通过，根目录与 dist 后台同步生成。此为隔离浏览器与模拟原生助手的结果，未重载或目视检查用户当前固定工具栏。以下旧记录中的“待解锁用白底”规则全部由本条取代。
+
+**此前路径修复：已连接后仍然红底。** 在独立 Chromium 中运行实际后台和真实 `chrome.action.setIcon`，复现红底调用成功，但白底调用返回 `Failed to set icon 'icons/icon16.png': Failed to fetch`。白底使用相对路径，而 worker 位于 `src/`，因此图标请求指向不存在的 `src/icons/…`；红底通过 `runtime.getURL` 加载资源，所以能正常显示。现统一用扩展根目录完整地址恢复白底。之前只模拟 `setIcon` 接口的单元测试遗漏了此问题。
+
+上一轮新增 `drive-toolbar.mjs` 并接入浏览器回归：保留真实图标 API，在模拟原生助手的边界控制连接完成，按当时规则检查 Connecting 红底、建立连接后白底、PIN 成功、断连红底、重试红底及再次连接后白底。确认 16／48／128px 红底像素为 `[239,83,80,255]`，恢复资源为 `[255,255,255,255]`，且每次真实 `setIcon` 调用均成功完成。根目录入口在 Chromium 中通过，dist 入口在 Helium 的独立临时 profile 中通过；构建、静态检查和完整单元回归通过。该轮验证的是隔离浏览器的实际图标 API 与生产状态链路，未目视验收用户当前固定工具栏。
+
+**此前更正：Connecting 必须显示红底。** 用户确认真实悬停文字为 `Connecting to Apple Passwords…`，预期尚未连接时即有红色提醒。此前实现仅把 `disconnected`／`no_helper` 设为红底，遗漏了 `connecting`，因此该状态仍显示白底。现已将启动及重试连接纳入红底状态，确认连接成功后恢复原图，包括已连接但等待解锁的状态。`toolbar-status.test.mjs` 验证连接中变红、重试保持红底、连接成功恢复以及迟到的启动／失败位图不能覆盖恢复状态；当时 `npm run build`、`npm run check`、`npm test` 均通过，根目录与 dist 后台已同步生成，但未完成真实固定工具栏的视觉复验。
+
+初版连接失败／Apple 助手不可用时显示红底原图，连接中、已连接待解锁及已解锁时保留正常图标；其中连接中的白底规则已由上述更正取代。中英文悬停文字区分各状态。复用现有各尺寸图标，通过 OffscreenCanvas 合成红色背景，不修改原始图案或新增权限。初版 `toolbar-status.test.mjs` 覆盖启动与锁定、断连与恢复、迟到位图加载、缓慢图标写入、重复通知和 API 失败后的恢复。构建、静态检查与单元回归通过；当时未运行浏览器测试。
+
+随后针对用户反馈“不变红”检查正在运行的 Helium：加载路径为项目根目录，入口为新版 `src/background.bundle.js`，扩展管理页未记录运行／manifest 错误；实际 action 标题为 `Connected and unlocked`，此时按当前规则使用正常图标。在真实扩展页面调用生产绘制代码，16／48／128px 三种尺寸均产生 `[239,83,80,255]` 红色背景且保留纯黑图案。此检查只验证真实浏览器中的绘制结果，未人为断开用户会话，未声称已经目视验证浏览器工具栏的故障状态。
+
+## 保存／更新链路专项核实
+
+**最新真实复测与协议更正**：两分钟版本中，用户点击了 Apple 保存按钮，但设置中仍未找到测试账号；后台一直 `saving`，查询因队列阻塞而超时，最终再次断连。不能据此认定保险库存储成功或只是设置未刷新。随后检查从 Chrome 官方分发渠道取得的 Apple iCloud Passwords 3.3.0 源码：保存调用 `postMessage(cmd:6)`，不等待回复，收到 cmd 6／7 也仅忽略；NURL 使用 hostname 加明确端口。现改为单向投递、普通登录 QID、字符串 payload、保留端口，投递后清缓存。无回复／迟到回复不阻塞后续查询，投递异常不自动重试；对应实际后台和加密协议回归通过。下面的三秒／两分钟记录仅解释发现过程，最终实现不再等待保存回复。新实现的真实保存、独立查询与回填仍待验证。
+
+源码证据：Chrome Web Store 的 [Apple iCloud Passwords](https://chromewebstore.google.com/detail/icloud-passwords/pejdijmoenmkgeppbflobdenhhabjlaj)，本次下载版本 3.3.0，`background.js` 保存分支及原生消息分支、`content_script.js` 站点构造。未执行下载的扩展代码。
+
+**单向投递修复后的真实结果（macOS 14.7.6／23H626，Helium，2026-09-07）**：
+
+- 重新解锁并清缓存后，`localhost` 查询成功，但未返回上一轮 `fapassword-save-test-20260907074643`，与用户在系统设置中未找到它的结果一致。
+- 新建 `fapassword-save-test-20260907075518`，经真实页面提交，后台转为 `submitted`。用户报告点击“允许保存”后，立即以及稍后再次清缓存查询均成功，但没有该账号；会话保持 `unlocked`，此次没有发生保存等待导致的查询超时。没有找到账号，因此未执行密码回填，不能把这轮记为真实保存成功。
+- 使用 `security find-internet-password -a <精确测试用户名>`（未请求密码值）检查默认钥匙串，返回 44／未找到。这不覆盖 Apple 密码的全部存储，也不能据此确定底层失败原因。
+- 检查该助手相关时间窗口的统一日志，仅输出静态日志模板和计数，未获得明确的保存失败原因，未输出凭据。仍需核对用户所见弹窗的具体含义及当前 macOS 助手的保存兼容性；不能把“允许保存”或 `submitted` 当作写入证据。
+
+新增 `save-handoff.test.mjs`，在 Node 中运行实际 background、protocol、SRP 和 AES 代码，只模拟 Chrome 消息接口和原生传输，不访问真实保险库。覆盖已有账号手工替换密码、短时间不同版本、重复提交、缺失用户名、锁定后解锁交接和未收到确认时不自动重试。测试区分普通内容脚本传入 `generatedId: null` 与省略该字段的请求；后者暴露了生成记录不存在时仍读取 `.at` 的异常，已补充存在性判断。
+
+当前采集由真实提交意图触发，不验证网站登录是否成功；普通登录需能采集到用户名和密码，两步登录可能因缺失用户名跳过。协议发送 cmd 6、ACT=4（MAYBE_ADD），原账号 URL／USR／PWD 留空，提供新站点 host（含明确端口）、用户名和密码。因此它提交的是候选凭据，不能从代码证明 Apple 会精确覆盖某条原有记录。cmd 6 不等待回复；没有保存完成通知或自动写入后读回验证。既有浏览器更新测试手工替换模拟密码库，只证明发送和缓存失效，不证明真实写入。跨设备同步还需要 Apple 实际保存并开启 iCloud 钥匙串。
+
+本次不新增 Edit 界面。上述模拟测试不能作为真实保险库存储的验收证据。
+
+2026-09-07 在 macOS 14.7.6／用户现有 Helium 与真实扩展中打开 `http://localhost:8766/live-save.html`，用户六位码解锁后，提交专用虚构账号。用户确认 Apple 弹出保存询问，但尚未点击弹窗便消失；同期后台从 `saving` 变为 `uncertain`，会话回到 `needs_pin`。代码发现保存回复只等待三秒，随后主动关闭原生连接，外层操作还存在八秒期限。已将保存回复期限改为两分钟，外层同步延长，保留三分钟任务 TTL 和不确定结果不自动重试。新增实际后台／协议配合模拟原生传输的九秒确认回归并通过，覆盖两层旧期限。弹窗消失与断连的因果及真实写入／回读仍需修复后复测，不能记录为保存成功。
+
+`live-save.html`／`live-save.js` 提供新增、同账号改密、清空再填充及内存比较测试；密码仅保留在页面内存，不写日志、不提交给 HTTP 服务器。启动方式：`python3 -m http.server 8766 --bind 127.0.0.1 --directory test-harness`。本地“已提交”只表明触发页面事件；Apple 密码中的独立检查和刷新缓存后的真实回填才是存储验证。
+
+## 密码工具入口（2026-09-07）
+
+后续改为版本路由：UA Client Hints 返回真实 macOS 版本；13／14 使用密码设置入口，15 及以后使用“自动填充与密码”设置桥接入口，并提示从那里打开独立 App；无法识别版本时进入 Apple 官方说明。不会声称链接请求已成功打开 App，也不依赖策略助手。当前 Mac 实测版本提示为 14.7.6，普通 UA 却被冻结为 10_15_7；版本路由单元测试已通过，15／26 的实际系统跳转仍待对应设备验收，不宣称直接启动独立 App 已验证。
+
+弹窗底部新增“打开 Apple 密码”和“生成强密码”两个操作。前者通过用户点击触发 macOS `x-apple.systempreferences` 密码设置深链接，不依赖浏览器策略助手；后者复用加密随机生成器，在弹窗内临时展示结果并由用户明确点击复制。生成结果不发送后台、不写日志、不持久化。按用户要求本次没有运行浏览器测试；已通过静态检查和构建。
+
+Browser controls 的数量标记已移除，展开标记改为下拉箭头，summary 不再显示浏览器默认蓝色焦点框。最新修正：弹窗固定为 350px，中英文设置名称及提示精简措辞，保留助手安装命令和系统设置操作指引；文字保持 12px，不裁切或省略。空间不足时允许换行以保留全部文字。本次未运行浏览器测试，实际布局尚未经浏览器验收。生成器新增 8—64 位长度和特殊字符选项，单元测试覆盖两种字符策略。
+
+## 后续 UI 调整：内联列表与刷新（2026-09-07）
+
+**最新位置调整**：根据用户新的选择，统一提示移至当前内容下方，移除最小高度，仅有文字时增加顶部间距。解锁后无提示不再留下空白。浏览器驱动同步为检查列表位置稳定，不再要求空提示占位以保持窗口高度；本次不运行浏览器测试，旧截图和历史结果不代表此布局已完成浏览器验收。
+
+**最新追加的提示统一／HTTP 启动修改**：移除各视图分散的提示节点，验证码、连接、列表、刷新和不支持页面的操作提示统一使用当前内容下方的 `status-message`（解锁后位于账号列表下方）；空列表恢复也更新同一节点。移除 Unlock 的底部内阴影，内联账号增加与工具栏同尺寸、字体和边框配色的 Fill 按钮，共用原有可信点击校验。内容脚本所有标识改用 `getRandomValues`，避免普通 HTTP 中 `randomUUID` 不存在导致初始化失败，未放宽 HTTP 凭据策略。新增 Node VM 回归按 manifest 顺序执行实际内容脚本，覆盖缺少该 API 的启动、文档标识稳定性和不同文档隔离。`npm test`、`npm run check` 和构建通过；相关浏览器驱动仅同步了提示节点选择器，按用户要求没有运行浏览器测试，也没有操作报错站点。
+
+**此前追加的验证码流程／布局修改**：内联解锁现先强制请求新挑战，再尝试打开弹窗，避免成功打开窗口却未发码的提前返回。弹窗初始化复用同次请求，但仅在 `issued=true` 时使用新码文案。六位码与 Unlock 同行，输入框聚焦不叠加外框；本次进一步将原来的 `pin-status` 并入统一提示节点。弹窗接管后移除网页上的解锁状态提示。已补充“关闭系统窗口但挑战仍有效”、先发码后开窗、交接不重复发码和开窗失败仍发码的协议单元回归。本次按用户要求不运行浏览器测试，不宣称已完成真实系统提示验收。
+
+**此后追加的后台加载／页脚修改**：确认当前 Helium 的扩展路径是项目根目录，而单文件后台此前仅用于 dist。已恢复根目录生成入口并加入一致性检查；构建改为准备完成后原子替换，失败保留旧产物、不再删除 dist。页脚进一步缩到约 17px，增加独立背景和更明显的顶部分隔线，规范见 SPEC 第 2、10 节。5 项文件级构建安全回归已通过。按用户要求已停止浏览器测试；以下浏览器结果与截图属于追加修改之前，不代表这两项最新修改已完成浏览器验收。没有将原始报错归因为已确认的浏览器频繁刷新缺陷。
+
+按用户后续要求，内联列表直接以账号开头，底部独立页脚右对齐显示小字 `FAPassword`；保留方形边框和系统字体，不附加说明串。任意数量的账号均不显示滚动条，仍保留内部滚动和键盘选择。产品及工程约束已整理到 [SPEC.md](SPEC.md)。
+
+刷新不再清空已有列表：相同账号复用节点，查询／刷新／填充互斥。状态区已按最新要求改为放在列表下方，无文字时不占高度和间距。账号查询不要求存在输入框；无法取得文档时仍可查看账号，但禁止无目标填充。错误恢复不会留下旧错误；真实填充的文档校验继续保留。
+
+新增 `drive-experience.mjs` 的 10 项浏览器行为断言覆盖：
+
+1. 六位码解锁后立即连点刷新，与首次加载共用一次查询。
+2. 查询期间触发 30 次刷新仅产生一次原生账号查询；条目节点不移除、列表位置不变，不读取密码或重新申请验证码；连续完成四次刷新仍稳定。
+3. 刷新失败保留账号列表；随后成功空结果清除错误并恢复默认空状态。
+4. 内容脚本不可用时账号列表正常返回；空 document target 无法填充。
+5. 不可用页面反复刷新在同一状态位置更新进度／错误，不让窗口反复伸缩。
+6. 两套主题的第一项就是账号，右下角品牌为独立非交互元素；标准与 WebKit 滚动条样式均隐藏。
+7. 底部字段向上展开，为账号及页脚预留完整空间。
+8. 120 个账号全部保留，滚轮可以滚动，方向键可到最后一项并实际填充。
+9. 页面 `style-src 'none'` 不能恢复可见滚动条。
+10. 视口小到无法容纳选框时，连错误提示也能安全退出，不残留宿主或抛出异常。
+
+布局复查发现并修正了底部字段的初始高度判断；closed 点击劫持测试先验证新的鼠标位置确实能正常选择账号，再执行透明、位移、滤镜和覆盖攻击，避免点击页脚导致假通过。
+
+Helium / Chromium 152 的最终构建通过 16/16 组浏览器套件，包含以上 10/10 项交互回归与 39/39 项安全／业务回归。Chromium 123 全量 16/16 组通过；最终增加极小视口退出保护后，10/10 项交互回归再次通过。静态检查、69 项单元检查及构建通过，产物与 closed 测试版本对应文件一致。原生传输仍使用虚构账号模拟，本次没有操作真实 Apple 保险库或系统认证。
+
+界面附件：[浅色内联列表](test-harness/automation/shots/inline-light.png)、[深色内联列表](test-harness/automation/shots/inline-dark.png)、[长列表末项与页脚](test-harness/automation/shots/inline-long-list.png)、[刷新后弹窗](test-harness/automation/shots/popup-refresh-stable.png)。这些附件由测试生成，Git 忽略。
+
+## 自动验证环境与结果
+
+复查日期：2026-09-07。本机 macOS 14.7.6；浏览器为 Helium / Chromium 152.0.7977.75，以及最低声明版本 Chromium 123.0.6312.4。原生通信由测试传输模拟，测试账号和密码均为虚构数据。
+
+此前审查修复的基础结果（后续 UI 调整见上节）：
+
+- Node 22.23.1 与 Node 18.20.8：各 69 项命名检查通过；静态检查和资源检查通过。
+- Helium / Chromium 152：15/15 组浏览器套件通过，包含 39/39 项新增安全／业务回归。
+- Chromium 123：15/15 组浏览器套件通过；最后的策略开关调整后，39/39 项安全／业务回归及主题／缩放测试再次通过。该浏览器实际展示中文界面。
+- 原生助手：10/10 项 Python 测试通过，包含本机真实 CoreFoundation 只读查询。
+- 可安装目录：17 个文件；重复构建逐文件 SHA-256 一致，未包含测试传输。closed 测试版本的后台、内容脚本、弹窗脚本和字段策略与产物对应文件逐字节一致。
+- 两套主题 8 组文字配色及实际渲染文字均通过 4.5:1 检查；截图已目视复查，200% 缩放未出现横向溢出。
+- CI 已配置，尚未推送到远程执行。
+
+截图与校验和（由测试生成，Git 忽略）：[浅色界面](test-harness/automation/shots/popup-light.png)、[深色界面](test-harness/automation/shots/popup-dark.png)、[配色结果](test-harness/automation/shots/contrast.json)、[构建校验和](test-harness/automation/shots/build-checksums.json)。
+
+浏览器测试加载实际构建产物的后台脚本；只在前面加入模拟 `connectNative` / `sendNativeMessage` 的传输。后台消息权限、真实 SRP/AES-GCM、排队、缓存、文档绑定和保存流程均照常运行。测试传输的消息计数器只观察消息。可检查的版本开放建议框 Shadow DOM；隐私／点击劫持测试保留生产的 closed 模式。
+
+## 对照原审查编号
+
+“回归覆盖”表示列出的行为已成为自动测试断言；不表示可以证明所有网页变体均安全。
+
+| 原编号 | 实施内容 | 证据与边界 |
 |---|---|---|
-| C3 | SRP group prime corrupted: a stray `9` made it 3076 bits, non-standard and weak | replaced with the exact RFC 5054 3072-bit prime; added a startup assertion (768 hex digits). [srp.js](src/srp.js) |
-| — | AES-GCM decrypt read the IV from the wrong end. the helper sends replies as `iv ‖ ciphertext` (confirmed against Apple's decompiled `SecretSession.decrypt` and the Firefox reference) | `decrypt()` reads the IV as the first 16 bytes; `encrypt()` keeps IV-last for requests (Apple is intentionally asymmetric). [srp.js](src/srp.js) |
-| C1 | any in-extension message could fetch or fill passwords for an attacker-named origin | background rejects messages that aren't from its own UI (`sender.tab === undefined && sender.id === runtime.id`), removed the raw `getPassword` path, and resolves the target tab/origin from the real active tab, never caller input. [background.js](src/background.js) |
-| C2 | content script filled without checking origin or visibility; a hidden field on evil.com could capture a fill | fills require the exact pinned `expectedOrigin`, target only the requesting frame, reject all hidden/offscreen fields, and refuse non-HTTPS pages except reserved local-development hosts. [content.js](src/content.js), [background.js](src/background.js) |
+| 1 | 顶层 popover、宿主样式／位置快照、真实交互与命中检查 | `drive-redress.mjs`：生产 closed 模式下移动透明、transform、filter、覆盖，以及正常键盘填充 |
+| 2 | 检查祖先透明度、裁剪、覆盖、可视范围与命中 | `drive-security.mjs`：透明父容器、完全裁剪、覆盖字段不写入 |
+| 3 | 用户名写入触发事件后，重新检查密码类型、节点、表单和可见性 | 同步 input 修改密码框、异步替换节点回归 |
+| 4 | documentId、documentKey、请求令牌、字段引用和取消生命周期 | 同源导航旧票据拒绝；认证期间导航不得填新文档 |
+| 5 | 所有无关联 ID 命令超时均销毁连接 | `protocol-lifecycle.test.mjs`：2/4/5/6/14 命令迟到响应不能串连接 |
+| 6 | InvalidSession 使会话失效并广播状态，清缓存、取消查询 | 协议及真实后台行为回归 |
+| 7 | 原始用户名作为凭据身份，缓存键使用 origin 与精确字符串 | Alice/alice、前后空格、零宽字符的端到端填充和缓存测试 |
+| 8 | 生成器仅处理局部新密码／确认字段，排除当前密码 | 修改密码表单旧字段保持为空 |
+| 9 | HTTP 例外只保留明确回环主机；不默认允许 .test | `security-contract.test.mjs` 的 URL 行为断言；开发域名可改用 HTTPS |
+| 10 | 缓存携带会话代次，返回与写入时重新验证 | `session-cache.test.mjs`：失效后的在途结果不能重新入缓存 |
+| 11 | 每次读缓存校验 expiresAt | 时钟前进但删除定时器尚未运行的回归 |
+| 12 | 普通和延迟保存共用流程，收到助手确认后清两类缓存 | 保存更新后再次填充会重新读取密码 |
+| 15 | OTP 优先于 password 类型判断 | type=password + one-time-code 不建议、不填充 |
+| 16 | 排除 disabled、readonly、禁用 fieldset 和 inert | 四类实际 DOM 回归 |
+| 17 | 填充与保存共用密码语义识别 | current-password 切换为 text 的填充回归 |
+| 18 | 返回实际字段与阶段，密码阶段失败不报完整成功 | 正常两步用户名填充、部分填充失败分别断言 |
+| 19 | 记录最近真实操作的登录字段和 frame | 多表单工具栏填充、跨源许可登录 frame 选择回归 |
+| 20 | 新密码判断限定当前表单／局部容器，优先语义 | 别处注册按钮和密码框不能改变当前登录表单的分类 |
+| 21 | 空格只激活提交按钮；输入框仅 Enter 建立提交意图 | 无 form 页面空格不保存、Enter 保存 |
+| 22 | 保存快照限定提交作用域，排除不可编辑／隐藏字段并检查确认密码 | 无关表单、隐藏字段、新密码确认不一致回归 |
+| 23 | 已有用户名仍进入 Apple maybeAdd 流程以处理更新 | 普通登录页新密码会发送原生请求；是否批准仍由真实助手决定 |
+| 24 | 去重按 origin、精确账号、密码摘要；同次提交消费意图令牌 | 15 秒内两种密码均提交；同密码不同用户名不误去重 |
+| 25 | 提交事件同步发最小快照，摘要移到后台 | 实际 form 导航后保存请求仍到达模拟助手 |
+| 26 | 待解锁、失败、结果不确定、过期、重试和取消状态 | 锁定后提交、取消、无确认不自动重试；后台有有限退避重试 |
+| 27 | 保留每条任务的 TTL 定时器，每个异步阶段后重查时间 | 前一条调用较慢，后一条已过期时不得发送 |
+| 28 | AbortSignal、代次、排队期限；失效拒绝 waiter 和队列 | 取消排队请求不越过在途请求；失效期间解密不得返回旧结果 |
+| 29 | 同站点在途 Promise 合并；弹窗同状态不重复渲染 | 8 个真实后台请求只产生 1 次查询；弹窗初始化查询计数 |
+| 30 | 一次收集／分类并复用表单上下文 | 1,000 个候选只做 1 次地址字段扫描；安全可见性判断保留 |
+| 31 | 滚动／视口事件由 rAF 合并，先读布局再写位置 | 代码复查；视口、列表尺寸浏览器回归 |
+| 32 | composedPath、composed 事件、Shadow Root 内提交监听 | 组件内方向键／Enter、input 事件跨根、原生 submit 保存回归 |
+| 33 | 内联等待、错误、重试状态；输入或取消使旧请求失效 | 实际失败返回不会被忽略；状态提示不阻塞页面点击 |
+| 34 | 区分缺少助手／断连并提供重连，状态端口重建 | 断连状态、恢复按钮和协议重连测试；真实助手缺失仍需集成验收 |
+| 35 | 刷新同时使两类缓存失效，失败不显示成功 | 错误／空结果／刷新提示回归 |
+| 36 | 列表刷新与再次填充分离，保留完整 frame 目标 | 刷新不读取密码；跨源许可登录 frame 再次填充回归 |
+| 37 | 每次列表渲染重置默认空状态 | 查询失败后成功空结果恢复“没有已保存密码” |
+| 38 | 限制水平范围、宽高和内部滚动，处理 visualViewport | 800px 窗口右边界、长列表与 200% 缩放回归 |
+| 40 | 活动选项获得同一 Shadow Root 内真实焦点；恢复原字段 ARIA | 浏览器焦点回归通过；**VoiceOver 朗读与操作仍待人工验收** |
+| 41 | 状态可访问名称、账号专属填充名称、状态实时播报 | DOM 可访问名称断言；真实读屏行为见上行 |
+| 42 | 调整两套主题的说明／提示／悬停文字颜色与部分小字号 | `drive-visual.mjs`：8 组文字配色均不低于 4.5:1，并留截图 |
+| 43 | 错误映射到双语消息；HTML 提交语义与中英日局部规则 | 中文登录按钮回归；英文／中文实际扩展界面；未承诺全部语言 |
+| 44 | 验证后清空 PIN，新码／输入／验证互斥 | 解锁后输入为空，申请新码期间全部验证控件禁用 |
+| 46 | 读取当前浏览器的实际布尔值和管理状态 | `native-policy.test.py`：强制 true 不算禁用，别的浏览器不影响当前结果 |
+| 47 | 从启动进程识别浏览器，配置只含该浏览器一个 payload | 每个支持 bundle 的作用范围、独立文件及 UI 范围提示；不自动改旧配置 |
+| 50 | 不同源 iframe 必须加载且内容脚本已登记，前提失败报错 | `drive-xorigin.mjs`：加载／documentId／frameId／查询计数断言 |
+| 51 | 浏览器测试运行生产后台，仅模拟原生边界；移除代码字符串安全断言 | 真实消息权限、请求令牌、缓存、会话与保存端到端运行 |
+| 52 | 严格编码与 UTF-8，负向认证／截断／TID／降级／Base64／失效竞态 | 独立 AES 向量、SRP 公钥边界、完整 Base64 握手及协议测试 |
+| 53 | 整理真实 Apple 助手验收矩阵与逐步操作 | **未完成真实保险库验收**；需要测试账号、本机验证码／Touch ID 和不同系统环境 |
+| 54 | CI 增加最低 Node、两版 Chromium、实际构建目录、macOS 原生逻辑 | `.github/workflows/ci.yml`；工作流配置不等于远程运行已成功 |
+| 55 | tmpdir/mkdtemp、finally 清理、统一 BASE；关键前提错误可见 | 新旧驱动共用拥有者清理；浏览器失败也执行清理 |
+| 57 | 修正 README/COMPLAINTS 中安全、OTP、逐键处理与 Chrome 隐私 API 承诺 | 区分模拟验证、实际助手确认、平台限制和剩余人工工作 |
 
-## Other hardening
+## 真实 Apple 助手验收（待执行）
 
-- SRP range checks (H1): reject a server public key outside `(0, N)` and reject `u == 0`. [srp.js](src/srp.js)
-- downgrade resistance (H2): the per-handshake `PROTO` field is verified; the capabilities flag is treated leniently because the real helper may omit it (matching the reference), so the mode is governed by PROTO negotiation.
-- concurrent-query collision: the native protocol echoes the same `cmd` with no correlation id, so overlapping requests could cross-wire or hang. all exchanges are serialized behind a mutex (verified: max concurrency = 1). [protocol.js](src/protocol.js)
-- native disconnects reject every pending waiter, including no-timeout Touch ID reads, so the serialized queue cannot deadlock; failed capability negotiation drops its port and permits retry.
-- concurrent startup/focus connection attempts await the same capabilities negotiation; the UI never treats a half-connected port as a usable locked session.
-- a locked-field unlock click opens the extension popup when possible and otherwise requests one challenge with an explicit toolbar/PIN instruction; failures are visible.
-- AES key imported `extractable: false`.
-- AES `CryptoKey` is derived once per SRP session and discarded with that session.
-- permissions trimmed: no `tabs`, `activeTab`, `alarms`, or `scripting`; URL access comes from the declared host permission and content scripts are static.
-- PIN entry stays in extension UI. Account-name suggestions are inside a closed Shadow DOM, so ordinary page selectors/text APIs cannot read them.
+使用独立浏览器 profile 和专用测试账号，禁用同 ID 的 Apple 官方扩展。不要把真实密码、验证码或恢复码写入记录。本轮未获专用测试账号，未对个人保险库进行读写，也未安装或移除系统配置。
 
-## A padding suggestion that was not taken
+| 系统 | Chrome | Edge | Brave | Helium |
+|---|---|---|---|---|
+| macOS 14（最低系统声明） | 待验收 | 待验收 | 待验收 | 待验收；本机仅完成模拟传输及 CoreFoundation 读取 |
+| macOS 15 | 待验收 | 待验收 | 待验收 | 待验收 |
+| 后续拟支持的 macOS 版本 | 按具体系统／浏览器 build 记录 | 同左 | 同左 | 同左 |
 
-One audit suggested padding all SRP hash inputs in `computeM` for consistency.
-Apple's actual `_calculateM`/`createSessionKey` in the decompiled extension pads
-only `g` (and pads `A`, `B` only for the `u` hash), leaving `A`, `B`, `salt`, `K`
-unpadded in `M`. This code already matches Apple, so padding would break interop
-with the real helper.
+每个格子记录系统 build、浏览器版本、助手版本／路径和以下结果：
 
-## Verified vs not
+1. 首次连接、显示验证码、粘贴正确码、错误码后新码、过期码和成功后清空输入。
+2. 查询专用站点的测试账号；验证大小写不同账号保持独立。
+3. 内联、工具栏、两步登录、显示密码、同源 iframe 和许可跨源登录框填充。
+4. Touch ID 批准与取消；等待期间切换表单或同源导航不得填到新目标。
+5. 新账号保存、已有账号更新、生成密码、确认不一致、锁定时延迟保存、重试和取消。
+6. 在 Apple Passwords 应用中独立核对写入结果；收到 cmd 6 回复不能替代这一步。
+7. 锁屏／解锁、睡眠／唤醒、助手退出、断连和重新授权后缓存不得沿用。
+8. VoiceOver 检查选项名称、实际焦点、方向键／Enter／Escape、错误播报和账号专属操作名称。
+9. 可选策略助手只影响当前浏览器；强制 true/false、旧跨浏览器配置迁移与移除应使用专用系统环境验收。
 
-Verified (automated):
-- group prime has canonical RFC 5054 width and an independently pinned SHA-256 fingerprint
-- SRP handshakes cover leading-zero salt/key cases and challenge expiry/reissue behavior
-- a fixed AES-GCM vector verifies helper-framed (IV-first) replies
-- SRP range checks reject `B=0` and `B=N`
-- native-port failure/retry and no-timeout disconnects release the serialized queue
-- manifest/locales/resources plus JavaScript, Shell, and Python syntax
+浏览器助手接口属于版本敏感集成。当前自动测试不证明所有组合可用，也不证明任意恶意 CSS、未标注表单或网站自定义控件均能识别。
 
-Not yet verified (requires a Mac and the on-screen PIN):
-- the live end-to-end connect → PIN → list → fill against the real helper
-- side-by-side behavior vs Apple's extension on real sites (use `test-harness/`)
+## 安全边界与参考
+
+- 页面在用户明确选择填充后会得到对应凭据。closed Shadow DOM 不能独自成为安全边界；浏览器测试只覆盖已列出的 UI 劫持形式。
+- 待保存任务仅保留在后台内存中。worker 或浏览器重启会丢弃任务，需要从页面重新提交；三分钟是最大保留时间，不是跨重启的持久化承诺。
+- 跨源父页面的渲染状态不能由子 frame 的 DOM API 完整观察；没有宣称全覆盖跨源嵌套渲染或所有读屏软件行为。
+- HTTP `.test` 可以被配置成非回环地址，不作为默认安全例外：[RFC 6761](https://www.rfc-editor.org/rfc/rfc6761)。
+- 文档定向使用 [Chrome tabs.sendMessage documentId](https://developer.chrome.com/docs/extensions/reference/api/tabs#method-sendMessage)；最低浏览器选择参照 [Playwright 1.42 发布说明](https://playwright.dev/docs/release-notes#version-142)。
+- `passwordSavingEnabled` 控制保存提示，不能据此宣称关闭全部密码自动填充：[Chrome privacy API](https://developer.chrome.com/docs/extensions/reference/api/privacy)。
+- 原生管理策略区分“是否强制”和“实际值”；实测系统调用单独于模拟助手验证。
+
+历史密码学修复继续保留回归：RFC 5054 的 3072-bit 素数由独立 SHA-256 指纹校验；固定 AES-GCM 向量验证助手回复的 IV-first 格式，请求仍使用 IV-last。过去模拟两端共享错误常量导致的“100/100”说法不构成互操作证据。

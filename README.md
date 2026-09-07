@@ -31,12 +31,14 @@ As long as the OCR got six digits right, pasting `123 456`, `1234 56` or `123.45
 | The complaint about Apple's extension | What this does |
 |---|---|
 | re-prompts for the 6-digit code every restart, sometimes every few hours | the live native-messaging port keeps the MV3 worker and session alive; a real disconnect is detected and recovered cleanly ([protocol.js](src/protocol.js)) |
-| "Enable AutoFill" balloon on every field, including OTP boxes | the inline dropdown shows up only on genuine login fields and never on one-time-code boxes ([content.js](src/content.js)) |
-| 100% CPU / typing lag | the content script does zero per-keystroke work, it only reacts when you focus a login field |
+| "Enable AutoFill" balloon on every field, including OTP boxes | explicit OTP semantics take precedence over password type; known OTP/search/contact fixtures are excluded, while unlabelled custom widgets remain heuristic ([field-policy.js](src/field-policy.js)) |
+| 100% CPU / typing lag | focus triggers classification; typing only dismisses stale offers/cancels pending fills, without a document scan or native query |
 | re-downloads every image on hover to scan for QR codes | there's no image or QR scanning here at all |
-| fills the wrong field or wrong origin | fills are pinned to an exact origin and frame, and only visible fields are eligible |
+| fills the wrong field or wrong origin | fills bind the exact origin, frame, document, request and field references; eligibility is rechecked before each write |
 
 You fill two ways: the inline dropdown when you focus a login field, or the toolbar popup. Both run through the same origin-checked, OS-authorized path.
+
+The toolbar popup also has two explicit utilities at the bottom: open Apple Passwords to maintain credentials, and generate a strong password. With the optional native helper installed or updated (`./native/install.sh`), Open Apple Passwords first launches the standalone app and automatically falls back to password settings if launch fails. Without a compatible helper, the button uses the macOS settings link (or Apple's instructions if the OS version is unavailable). The generator lets you choose an 8–64 character length and whether to include special characters. Generated values stay in the popup until you explicitly copy them; they are not sent to the background or persisted. Focusing a new-password field also exposes direct fill options in the inline menu.
 
 ## The catch you should know about first
 
@@ -89,13 +91,13 @@ git clone https://github.com/yinyu985/FAPassword.git
 
 ### Optional: hide the browser's own password manager
 
-The popup can suppress the browser's competing save bubble and autofill dropdown on its own (toggles in the footer). To also remove the browser's whole password manager — the omnibox key icon and built-in autofill — there's a one-time helper, since an extension can't write a macOS policy by itself:
+The popup can disable browser password saving through `passwordSavingEnabled`. This API does not promise to disable every password autofill surface. The separate address toggle controls `autofillAddressEnabled`; it does not control payment autofill. See [Chrome's privacy API](https://developer.chrome.com/docs/extensions/reference/api/privacy). Disabling the current browser's password manager through macOS managed policy requires the optional helper:
 
 ```bash
 ./native/install.sh   # registers a tiny native helper, macOS only
 ```
 
-Then fully quit and reopen your browser (`Cmd+Q`). The **Hide browser password manager entirely** toggle builds a macOS configuration profile and opens it for your approval. The helper accepts messages solely from this extension's ID and only opens that profile or the System Settings profile pane. `./native/uninstall.sh` removes the helper registration; an installed profile must be removed by you in System Settings.
+Then fully quit and reopen your browser (`Cmd+Q`). The **Hide browser password manager entirely** toggle builds a configuration profile for the **launching browser only** and opens it for your approval. The UI names that browser. A forced policy counts as disabled only when its actual Boolean value is false; policies for other browsers are ignored. Re-run the installer to update older helper copies. Existing legacy profiles that cover several browsers must be removed manually in System Settings before switching to the scoped profile. The helper accepts messages solely from this extension's ID and only opens Apple Passwords, password settings, that profile or the System Settings profile pane. `./native/uninstall.sh` removes the helper registration; an installed profile must be removed by you in System Settings.
 
 ## How it works
 
@@ -127,7 +129,7 @@ PasswordManagerBrowserExtensionHelper (macOS native, talks to iCloud Keychain)
 
 A code belongs to one handshake. The helper ends that handshake as soon as it checks a code, right or wrong. A new handshake puts a new code on screen and ends the old one. The old prompt can stay visible after its code is dead.
 
-The extension asks for a code only when no live code exists. After a failed attempt, the message names the code to type next. If your Mac shows two prompts, use the code from the newest one. You can also select **Request a new code** in the popup.
+Clicking the inline unlock entry requests a fresh code, even if you dismissed the previous system window. The extension popup then reuses that challenge so it does not issue a second code. After a failed attempt, one shared status area explains which code to enter. You can also select **Request a new code** in the popup.
 
 A code expires after 3 minutes. After that, the extension asks your Mac for a new code instead of checking the old one.
 
@@ -148,14 +150,29 @@ two extensions collide at the integration boundary and can race for prompts and 
 - every password query is AES-GCM encrypted end to end with the helper
 - the PIN only derives the SRP shared key, it isn't stored
 - PIN entry stays in the extension popup; account suggestions render in a closed Shadow DOM
-- password delivery is pinned to the exact frame and origin and refuses non-HTTPS sites (except local development hosts)
+- password delivery binds an exact document/request/field and refuses HTTP except explicit loopback hosts (`localhost`, subdomains of `.localhost`, `127.0.0.1`, `[::1]`); `.test` and private-network HTTP hosts are not exceptions
+- closed Shadow DOM protects suggestion contents, while top-layer positioning, hit-testing and trusted interaction checks defend the reproduced redressing cases; this is not a proof against all hostile page rendering techniques
+- passwords are cached in memory for at most two minutes, with expiry checked on reads; session changes and save handoffs invalidate caches
 - reading a password can trigger a Touch ID prompt, that's the helper, not this extension
+
+## Saving and refresh behavior
+
+Refresh updates the account list and invalidates both credential caches. It does not read or fill a password. **Fill again** is a separate explicit action that retains the original login frame.
+
+User submissions are handed to the background immediately. Existing usernames are also offered to Apple's `maybeAdd` flow so that changed passwords can be considered for update. Deferred requests expire after three minutes before handoff. The popup shows waiting, failed, uncertain, expired and sent states with retry/cancel controls. Like Apple's client, saving sends a one-way command; it does not wait for a save reply or block subsequent queries. A successful send proves neither approval nor persistence in the vault. Check Apple Passwords before retrying an uncertain request. Cancelling a local request cannot undo a native operation already received by macOS.
+
+Automated checks use simulated native transport. They do not establish real Touch ID, live-vault or OS/browser compatibility. See [the current verification matrix](VERIFICATION.md) for tested cases and remaining manual acceptance.
 
 ## Development
 
+Product behavior, UI hierarchy, scrollbar-free inline suggestions, refresh interaction and security constraints are defined in [SPEC.md](SPEC.md) (Chinese). Tested scope and remaining manual acceptance are recorded separately in [VERIFICATION.md](VERIFICATION.md).
+
 `npm run check` validates JavaScript, shell/Python syntax, locales, and manifest resources.
-`npm test` runs dependency-free protocol/crypto regressions. `npm run build` creates one
-clean, reproducible directory under `dist/`; load that directory as the unpacked extension.
+`npm test` runs protocol/crypto and build-safety regressions using the installed development dependencies.
+The root manifest loads the checked-in classic worker `src/background.bundle.js`. After editing
+background source modules, run `npm run bundle:background` or `npm run build`; `check` rejects stale bundles.
+`npm run build` updates the versioned directory under `dist/` with identical worker bytes,
+replaces files atomically and preserves other installed versions. Load that directory or the project root.
 Optional browser automation is documented in
 [`test-harness/automation/README.md`](test-harness/automation/README.md) and never downloads a browser automatically.
 

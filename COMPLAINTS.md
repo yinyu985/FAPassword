@@ -6,7 +6,7 @@ Chromium extension to what FAPassword does. "Covered" means a regression exists 
 Sources are user reports across the Chrome Web Store, Apple Communities,
 Google/Brave forums, GitHub, AppleInsider, and Macworld.
 
-Legend: ✅ fixed · 🟡 partial · ⛔ inherent (no extension can fix)
+Legend: ✅ covered in the named automated fixtures · 🟡 partial / requires live acceptance · ⛔ external platform constraint. These marks are not universal safety or compatibility guarantees.
 
 | # | Complaint | Apple's behavior | FAPassword | Status |
 |---|---|---|---|---|
@@ -14,11 +14,11 @@ Legend: ✅ fixed · 🟡 partial · ⛔ inherent (no extension can fix)
 | 2 | Verification code never arrives | helper deadlocks; says code generated, none appears | 8s timeout plus a clear error instead of hanging; a broken helper is helper-side | 🟡 |
 | 3 | "Failed to verify your identity" | server/helper rejects the browser | helper-side / Apple gating | ⛔ |
 | 4 | "Enable AutoFill" balloon on every OTP box and random fields | pops on one-time-code boxes and non-login fields | excludes OTP, search, tags, comments, profile/contact and checkout-address fields; covered by browser fixtures | ✅ |
-| 5 | High CPU / typing lag | re-scans the DOM and re-attaches listeners on every keystroke | no per-keystroke work; classification runs on focus, and login-name results have a short per-origin cache | ✅ |
+| 5 | High CPU / typing lag | re-scans the DOM and re-attaches listeners on every keystroke | lightweight input/keyboard intent handlers; classification runs on focus with reusable form context; same-origin queries share a short cache | ✅ |
 | 6 | Double popups vs Chrome's manager | both managers fight over the field | popup offers opt-in controls for Chromium's competing features; installation changes no browser-wide preference by default | ✅ |
-| 7 | Breaks Google Pay / payment autofill | Apple's "disable Chrome autofill" also kills credit-card and address autofill | suppresses only `passwordSavingEnabled`; Chrome's payment and address autofill keep working | ✅ |
+| 7 | Breaks Google Pay / payment autofill | Apple's "disable Chrome autofill" also kills credit-card and address autofill | the password-saving toggle controls `passwordSavingEnabled`, not all password autofill; address suppression is separate and payment settings are untouched | ✅ |
 | 8 | Two-step (username then password) logins fail | doesn't re-detect the dynamically-shown password field | `autocomplete="username"` plus page-wide password detection handles Google/Microsoft-style two-step. verified in the UI suite | ✅ |
-| 9 | Fills, but login fails until you edit a char | programmatic fill doesn't dispatch `input`/`change`, so the page's JS never sees the value | dispatches real `input` and `change` events on every fill. verified: events fire on both fields | ✅ |
+| 9 | Fills, but login fails until you edit a char | programmatic fill doesn't dispatch `input`/`change`, so the page's JS never sees the value | dispatches synthetic `input` and `change` events with `bubbles:true` and `composed:true` on every fill. verified: events fire on both fields | ✅ |
 | 10 | Subdomain / domain-matching failures | strict exact-host matching | passes the full hostname to the helper, which does Apple's own associated-domain matching | 🟡 |
 | 11 | Popup obscures the screen / can't dismiss | overlay z-index and positioning bugs, premature dismissal | the dropdown anchors beside the field, follows scroll/resize, dismisses on outside action, and lives in a closed Shadow DOM | ✅ |
 | 12 | "Never save" flag stuck, unclearable off-Mac | no UI to clear it | FAPassword does not create a local never-save list; save/update decisions remain in Apple's native sheet | N/A |
@@ -27,7 +27,7 @@ Legend: ✅ fixed · 🟡 partial · ⛔ inherent (no extension can fix)
 | 15 | Touch ID re-prompt friction | re-prompts per fill | the OS controls the biometric gate (`RequiresUserAuthenticationToFill`); can't be removed | ⛔ |
 | 16 | Dark-mode toolbar icon can be hard to recognize | the wide black dog/Apple silhouette loses detail at 16 px | original artwork retained; a future 16 px-specific redesign needs a solid high-contrast field and must preserve the dog/Apple shape | 🟡 |
 | 17 | Windows version coupling | tied to a specific iCloud-for-Windows build | helper-side | ⛔ |
-| 18 | Clickjacking / autofill UI-redressing (Marek Tóth 2025; affects Apple, 1Password, Bitwarden) | autofills into invisible/overlaid fields | requires visible, in-viewport fields plus an explicit user action; delivery is pinned to the exact frame and origin | ✅ |
+| 18 | Clickjacking / autofill UI-redressing (Marek Tóth 2025; affects Apple, 1Password, Bitwarden) | autofills into invisible/overlaid fields | top-layer closed-shadow offers validate trusted interaction and exposure; fields are rechecked for each write; exact document and request targeting; reproduced redressing cases pass, further attacks remain possible | 🟡 |
 
 ## What it fixes that Apple doesn't
 
@@ -35,8 +35,8 @@ Legend: ✅ fixed · 🟡 partial · ⛔ inherent (no extension can fix)
 - frequent re-prompting within a session (#1): live native port plus deterministic reconnect
 - the "edit a char to make login work" bug (#9): proper input events
 - breaking Google Pay (#7): payment autofill untouched
-- typing lag (#5): no per-keystroke work
-- clickjacking exfiltration (#18): visibility, intent, and origin checks
+- typing lag (#5): no per-keystroke document scanning or native querying
+- reproduced clickjacking cases (#18): top-layer surface, visibility, intent, document and request checks
 
 ## What it can't fix
 
