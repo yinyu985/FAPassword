@@ -2,9 +2,11 @@ import { execFileSync } from "node:child_process";
 import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkBackground } from "./bundle-background.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
+await checkBackground(root);
 
 async function walk(dir) {
   const out = [];

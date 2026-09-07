@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bundle:background": "node scripts/bundle-background.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
     "test": "node test-harness/automation/run-unit.mjs",
-    "test:e2e": "node test-harness/automation/run-all.mjs"
+    "test:e2e": "node test-harness/automation/run-all.mjs",
+    "test:native": "python3 test-harness/automation/native-policy.test.py"
   },
   "devDependencies": {
     "esbuild": "0.28.2"
