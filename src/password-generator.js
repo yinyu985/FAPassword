@@ -49,5 +49,24 @@
     return characters.join("");
   }
 
-  globalThis.FAPASSWORD_PASSWORDS = Object.freeze({ appleStyle, alphanumeric });
+  function custom(length = 20, includeSpecial = true) {
+    if (!Number.isSafeInteger(length) || length < 8 || length > 128) {
+      throw new RangeError("password length must be between 8 and 128");
+    }
+    const lower = "abcdefghijklmnopqrstuvwxyz";
+    const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const digits = "0123456789";
+    const special = "!@#$%^&*()-_=+[]{};:,.?";
+    const all = lower + upper + digits + (includeSpecial ? special : "");
+    const characters = [pick(lower), pick(upper), pick(digits)];
+    if (includeSpecial) characters.push(pick(special));
+    while (characters.length < length) characters.push(pick(all));
+    for (let i = characters.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1);
+      [characters[i], characters[j]] = [characters[j], characters[i]];
+    }
+    return characters.join("");
+  }
+
+  globalThis.FAPASSWORD_PASSWORDS = Object.freeze({ appleStyle, alphanumeric, custom });
 })();

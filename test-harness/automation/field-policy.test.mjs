@@ -20,10 +20,11 @@ class Input extends HTMLInputElement {
     this.inputMode = attributes.inputmode || "";
     this.isConnected = true;
     this.offsetParent = {};
-    this.ownerDocument = { getElementById: () => null };
+    this.ownerDocument = { ...document, getElementById: () => null, elementFromPoint: () => this };
     this.form = null;
     this.rect = { left: 10, top: 10, right: 210, bottom: 50, width: 200, height: 40 };
   }
+  contains(node) { return node === this; }
   getAttribute(name) {
     return this.attributes[name] ?? null;
   }
@@ -61,6 +62,12 @@ check("display:none password is never fillable", !policy.isFillable(displayNone)
 const offscreen = new Input({ type: "password" });
 offscreen.rect = { left: -9999, top: 0, right: -9900, bottom: 40, width: 99, height: 40 };
 check("offscreen password is never fillable", !policy.isFillable(offscreen));
+
+let scans = 0;
+const large = Array.from({length:1000}, (_, i) => new Input({ name: "email", type: "email", id: "email"+i }));
+const largeForm = { tagName: "FORM", elements: large, querySelectorAll: () => { scans++; return large; } };
+large.forEach(input => input.form = largeForm);
+check("1000 candidates share one address-context scan", policy.classify(largeForm).usernames.length === 1000 && scans === 1);
 
 const passed = results.filter(Boolean).length;
 console.log(`\n==== ${passed}/${results.length} PASS ====`);
