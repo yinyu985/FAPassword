@@ -47,7 +47,9 @@ export const chromium = new Proxy(rawChromium, {
         await popup.goto(new URL("popup.html", worker.url()).href);
         await popup.locator("#view-pin:not([hidden]) #pin:enabled").waitFor({ state: "visible" });
         await popup.fill("#pin", "123456");
-        await popup.waitForSelector("#view-unlocked:not([hidden])");
+        // Without an active website this section is empty and has zero height.
+        // Authentication is complete when it is unhidden, even without account rows.
+        await popup.waitForSelector("#view-unlocked:not([hidden])", { state: "attached" });
         await popup.close();
       }
       return context;

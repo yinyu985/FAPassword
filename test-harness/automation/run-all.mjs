@@ -76,7 +76,8 @@ try {
     } else {
       failures.push(name);
       console.log(`  FAIL (exit ${code})`);
-      console.log(output.split("\n").filter((line) => /FAIL|Error|throw/.test(line)).slice(0, 8).join("\n"));
+      // Preserve assertion values, source locations and Playwright call logs.
+      console.log(output.trim());
     }
   }
   console.log(`\n${passed}/${drivers.length} browser suites passed`);

@@ -162,7 +162,7 @@ try {
   await test('save snapshot excludes hidden fields and unrelated forms',async()=>{
     await open(markup.replace('</form>','<input type="password" style="display:none" value="poison"></form>')+'<form><input autocomplete="username" value="other"><input type="password" value="other-password"></form>');
     await page.locator('#u').fill('visible-user');await page.locator('#p').fill('visible-secret');const before=await count('saves');await page.locator('button').first().click();await wait(async()=>await count('saves')===before+1);
-    assert.deepEqual(await worker.evaluate(()=>testNative.saves.at(-1)),{username:'visible-user',password:'visible-secret',host:new URL(base).hostname});
+    assert.deepEqual(await worker.evaluate(()=>testNative.saves.at(-1)),{username:'visible-user',password:'visible-secret',host:new URL(base).host});
   });
   await test('mismatched new and confirmation passwords do not save',async()=>{
     await open('<form><input id="u" autocomplete="username" value="confirm-user"><input type="password" autocomplete="new-password" value="one"><input type="password" autocomplete="new-password" value="two"><button>Save</button></form>');

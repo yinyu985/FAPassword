@@ -41,19 +41,22 @@ try {
   await popup.goto(new URL("popup.html", worker.url()).href);
   await popup.locator("#pin:enabled").waitFor();
   await page.bringToFront();
-  await worker.evaluate(() => testNative.delays.names = 450);
+  await worker.evaluate(() => {
+    testNative.namesGate = new Promise(resolve => testNative.releaseNames = resolve);
+  });
   const beforeUnlock = await count("names");
   // Keep the website active, as with an actual toolbar popup, while entering the code.
   await popup.evaluate(() => {
     const pin = document.getElementById("pin");
     pin.value = "123456"; pin.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await popup.locator("#view-unlocked:not([hidden])").waitFor();
+  await popup.locator("#view-unlocked:not([hidden])").waitFor({ state: "attached" });
   await until(async () => await count("names") > beforeUnlock);
   assert.equal(await popup.locator("#refresh").isDisabled(), true);
   await popup.evaluate(() => {
     for (let i = 0; i < 20; i++) document.getElementById("refresh").dispatchEvent(new MouseEvent("click"));
   });
+  await worker.evaluate(() => { testNative.releaseNames(); testNative.namesGate = null; testNative.delays.names = 450; });
   await idle();
   assert.equal(await count("names") - beforeUnlock, 1);
   assert.equal(await popup.locator("#logins button").count(), 1);
@@ -62,7 +65,7 @@ try {
 
   await resetPage();
   await clickRefresh(); await idle();
-  await popup.setViewportSize({ width: 336, height: 640 });
+  await popup.setViewportSize({ width: 350, height: 640 });
   const listBounds = await popup.locator("#logins").boundingBox();
   await popup.evaluate(() => {
     window.rowsBeforeRefresh = [...document.querySelectorAll("#logins li")];

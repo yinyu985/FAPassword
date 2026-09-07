@@ -11,7 +11,8 @@ try {
   const page=await context.newPage();await page.goto(base+'/login-standard.html');
   const popup=await context.newPage();await popup.goto(new URL('popup.html',worker.url()).href);await page.bringToFront();await popup.reload();
   await popup.locator('#logins button').first().waitFor();
-  await popup.setViewportSize({width:336,height:720});
+  // SPEC.md fixes the popup width at 350 CSS pixels, including at 200% zoom.
+  await popup.setViewportSize({width:350,height:720});
   const evidence={};
   for(const theme of ['light','dark']) {
     await popup.emulateMedia({colorScheme:theme,reducedMotion:'reduce'});
@@ -42,7 +43,7 @@ try {
     await popup.locator("body").screenshot({path:shots+`popup-${theme}.png`,animations:"disabled"});
     console.log(`PASS ${theme} theme text pairs meet 4.5:1, no horizontal overflow`);
   }
-  await popup.evaluate(()=>document.documentElement.style.zoom='2');await popup.setViewportSize({width:672,height:900});
+  await popup.evaluate(()=>document.documentElement.style.zoom='2');await popup.setViewportSize({width:700,height:900});
   assert.equal(await popup.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await popup.locator('body').screenshot({path:shots+'popup-200-percent.png',animations:'disabled'});
   await writeFile(shots+'contrast.json',JSON.stringify(evidence,null,2)+'\n');

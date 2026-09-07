@@ -72,6 +72,7 @@ chrome.runtime.connectNative = (host) => {
     let response;
     const name = message.cmd === 4 ? "names" : message.cmd === 5 ? "passwords" : "saves";
     state.counters[name]++;
+    if (name === "names" && state.namesGate) await state.namesGate;
     if (state.delays[name]) await new Promise((resolve) => setTimeout(resolve, state.delays[name]));
     if (message.cmd === 6) {
       state.saves.push({ username: data.NUSR, password: data.NPWD, host: data.NURL });
