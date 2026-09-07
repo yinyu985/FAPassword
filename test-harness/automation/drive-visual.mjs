@@ -11,6 +11,8 @@ try {
   const page=await context.newPage();await page.goto(base+'/login-standard.html');
   const popup=await context.newPage();await popup.goto(new URL('popup.html',worker.url()).href);await page.bringToFront();await popup.reload();
   await popup.locator('#logins button').first().waitFor();
+  // Keep animation-frame stability checks running while capturing the popup.
+  await popup.bringToFront();
   // SPEC.md fixes the popup width at 350 CSS pixels, including at 200% zoom.
   await popup.setViewportSize({width:350,height:720});
   const evidence={};

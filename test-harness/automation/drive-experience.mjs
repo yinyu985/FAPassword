@@ -90,7 +90,11 @@ try {
   assert.equal(await popup.locator("#status-message").textContent(), await message("passwordsRefreshed"));
   for (let i = 0; i < 4; i++) { await clickRefresh(); await idle(); assert.deepEqual(await popup.locator("#logins").boundingBox(), listBounds); }
   assert.equal(await page.inputValue("#p"), "");
+  // Element screenshots wait for animation frames; background tabs may be
+  // throttled on CI. Restore the website afterward for active-tab queries.
+  await popup.bringToFront();
   await popup.locator("body").screenshot({ path: shots + "popup-refresh-stable.png" });
+  await page.bringToFront();
   console.log("PASS rapid and successive refreshes keep rows, list position and credentials unchanged");
 
   await worker.evaluate(() => testNative.statuses.names = 1);
