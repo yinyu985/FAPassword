@@ -72,10 +72,13 @@ export class ApplePasswords {
     // native protocol echoes the same cmd on replies with no correlation id, so two
     // in-flight requests with the same cmd collide. serialize all exchanges here
     this._lock = Promise.resolve();
+    this.epoch = 0;
+    this._jobs = new Set();
   }
 
   _rejectWaiters(error = new Error("connection closed")) {
-    for (const waiter of this._waiters.values()) {
+    for (const [cmd, waiter] of this._waiters) {
+      if (cmd === Command.SET_PASSWORD_FOR_LOGIN_NAME_URL) error.mayHaveBeenSent = true;
       if (waiter.timer) clearTimeout(waiter.timer);
       waiter.reject(error);
     }
@@ -91,18 +94,63 @@ export class ApplePasswords {
     this._challengeAt = 0;
     this._challengePending = undefined;
     this._challengeGen++;
+    this.epoch++;
     this._rejectWaiters(error);
+    for (const job of this._jobs) job.cancel(error);
     this._setState(state);
   }
 
-  _withLock(fn) {
-    const run = this._lock.then(fn, fn);
-    // keep chain alive even if fn rejects, so the next caller still runs
-    this._lock = run.then(
-      () => {},
-      () => {},
-    );
-    return run;
+  _withLock(fn, { signal, timeoutMs = 8000 } = {}) {
+    const epoch = this.epoch;
+    let rejectJob;
+    let timer;
+    const job = { started: false, cancelled: false, cancel(error) {
+      if (job.cancelled) return;
+      job.cancelled = true;
+      rejectJob(error);
+    } };
+    const cancelled = new Promise((_, reject) => { rejectJob = reject; });
+    const abort = () => {
+      const error = signal?.reason instanceof Error ? signal.reason : new Error("operation cancelled");
+      if (job.started) this.disconnect(error);
+      else job.cancel(error);
+    };
+    this._jobs.add(job);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    if (timeoutMs != null) timer = setTimeout(() => {
+      const error = new Error("operation timed out");
+      if (job.started) this.disconnect(error);
+      else job.cancel(error);
+    }, timeoutMs);
+    const run = this._lock.then(() => {
+      if (job.cancelled || epoch !== this.epoch) throw new Error("session changed");
+      job.started = true;
+      return Promise.race([Promise.resolve().then(fn), cancelled]);
+    });
+    const result = Promise.race([run, cancelled]);
+    // Cancellation also releases this generation's queue. Stale continuations must pass
+    // _assertSession before sending anything on a replacement native port.
+    // A queued cancellation rejects its caller immediately, but must not let the
+    // next caller overtake the operation that still owns the native stream.
+    this._lock = run.catch(() => {});
+    return result.finally(() => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      this._jobs.delete(job);
+    });
+  }
+
+  _assertSession(session, epoch, unlocked = true) {
+    if (this.session !== session || this.epoch !== epoch || !this.port || (unlocked && !this.ready)) {
+      throw new Error("session changed");
+    }
+  }
+
+  _queryError(status) {
+    const error = queryStatusError(status);
+    if (status === QueryStatus.InvalidSession) this.disconnect(error);
+    return error;
   }
 
   onStateChange(fn) {
@@ -138,33 +186,33 @@ export class ApplePasswords {
           ? null
           : setTimeout(() => {
               // only drop our own entry, never a newer request's
-              if (this._waiters.get(cmd) === entry) this._waiters.delete(cmd);
-              reject(new Error("timeout waiting for response"));
+              if (this._waiters.get(cmd) !== entry) return;
+              // No command has correlation IDs. A timed-out stream cannot be reused.
+              const error = new Error("timeout waiting for response");
+              if (cmd === Command.SET_PASSWORD_FOR_LOGIN_NAME_URL) error.mayHaveBeenSent = true;
+              this.disconnect(error);
             }, timeoutMs);
       this._waiters.set(cmd, entry);
       try {
         this.port.postMessage({ cmd, ...body });
       } catch (e) {
-        if (entry.timer) clearTimeout(entry.timer);
-        if (this._waiters.get(cmd) === entry) this._waiters.delete(cmd);
-        reject(e);
+        this.disconnect(e);
       }
     });
   }
 
-  _dispatch(message) {
+  _dispatch(message, port = this.port) {
+    if (!port || port !== this.port || !message || !Number.isInteger(message.cmd)) return;
+    // Drop the stream too: old in-flight replies have no session-independent request ID.
+    if (message.cmd === Command.PASSWORDS_DISABLED || message.cmd === Command.RELOGIN_NEEDED) {
+      this.disconnect(new Error("invalid session"));
+      return;
+    }
     const w = this._waiters.get(message.cmd);
     if (w) {
       this._waiters.delete(message.cmd);
       if (w.timer) clearTimeout(w.timer);
       w.resolve(message);
-    }
-    // unsolicited session-invalidation signals from the helper
-    if (message.cmd === Command.PASSWORDS_DISABLED || message.cmd === Command.RELOGIN_NEEDED) {
-      this.session = new SRPSession(this.capabilities?.shouldUseBase64);
-      this._challengeAt = 0;
-      this._challengeGen++;
-      this._setState(State.NeedsPin);
     }
   }
 
@@ -195,7 +243,7 @@ export class ApplePasswords {
       }
       this.port = port;
 
-      port.onMessage.addListener((msg) => this._dispatch(msg));
+      port.onMessage.addListener((msg) => this._dispatch(msg, port));
       port.onDisconnect.addListener(() => {
         const message = chrome.runtime.lastError?.message || "native helper disconnected";
         const state = /not found|forbidden|host/i.test(message) ? State.NoHelper : State.Disconnected;
@@ -204,6 +252,7 @@ export class ApplePasswords {
 
       this._send(Command.GET_CAPABILITIES)
         .then((reply) => {
+          if (this.port !== port) throw new Error("connection changed");
           this.capabilities = reply.capabilities ?? {};
           // capabilities flag may be absent or default to "old"; real helper
           // negotiates per-handshake via PROTO (we send + verify RFC there). only
@@ -252,12 +301,12 @@ export class ApplePasswords {
   // ask the helper for a challenge. macOS shows the 6-digit PIN access prompt.
   // ifNeeded keeps a live prompt alive instead of putting a second code on screen and
   // silently invalidating the one the user is reading
-  requestChallenge({ ifNeeded = false } = {}) {
+  requestChallenge({ ifNeeded = false, signal } = {}) {
     if (!this.session) return Promise.reject(new Error("not connected"));
     if (ifNeeded && (this.hasChallenge || this.state === State.Unlocked)) return Promise.resolve(false);
     // collapse concurrent requests: two prompts would race and only the last code works
     if (this._challengePending) return this._challengePending;
-    const p = this._withLock(() => this._issueChallenge());
+    const p = this._withLock(() => this._issueChallenge(), { signal });
     this._challengePending = p;
     const clear = () => {
       if (this._challengePending === p) this._challengePending = undefined;
@@ -270,7 +319,9 @@ export class ApplePasswords {
     // A new code is a new SRP handshake, not a retry of the old one. Reusing the old
     // TID/private key can make the real helper treat m0 as the already-issued challenge.
     const session = new SRPSession(this.capabilities?.shouldUseBase64);
+    const epoch = this.epoch;
     this.session = session;
+    this._setState(State.NeedsPin);
     this._challengeAt = 0;
     this._challengeGen++;
 
@@ -288,7 +339,7 @@ export class ApplePasswords {
       },
     });
 
-    if (this.session !== session) throw challengeError("Challenge was superseded; request another code");
+    this._assertSession(session, epoch, false);
     const pake = JSON.parse(bytesToUtf8(base64ToBytes(reply.payload.PAKE)));
     if (pake.TID !== session.username) throw new Error("challenge for another session");
     if (pake.ErrCode !== undefined) throw new Error(`server hello error ${pake.ErrCode}`);
@@ -306,39 +357,45 @@ export class ApplePasswords {
   // a PIN is only valid for the challenge it was displayed for. verifying it against any
   // other challenge always fails, so never quietly swap the challenge underneath the user -
   // issue a fresh one and tell the caller to ask for the NEW code
-  async verifyPin(pin) {
+  async verifyPin(pin, { signal } = {}) {
     if (!this.session) throw new Error("not connected");
     if (!this.hasChallenge) {
-      await this.requestChallenge();
+      await this.requestChallenge({ signal });
       throw challengeError("Enter the new code your Mac is showing now");
     }
     const gen = this._challengeGen;
     return this._withLock(async () => {
       // something re-issued while we queued: the typed code is for the old prompt
       if (gen !== this._challengeGen) throw challengeError("Enter the new code your Mac is showing now");
+      const session = this.session;
+      const epoch = this.epoch;
       try {
-        await this.session.setSharedKey(pin);
-        const m = await this.session.computeM();
+        await session.setSharedKey(pin);
+        this._assertSession(session, epoch, false);
+        const m = await session.computeM();
+        this._assertSession(session, epoch, false);
 
         const reply = await this._send(Command.HANDSHAKE, {
           msg: {
             QID: "m2",
             PAKE: jsonToBase64({
-              TID: this.session.username,
+              TID: session.username,
               MSG: MSGType.ClientVerification,
-              M: this.session.serialize(m, false),
+              M: session.serialize(m, false),
             }),
           },
         });
 
+        this._assertSession(session, epoch, false);
         const pake = JSON.parse(bytesToUtf8(base64ToBytes(reply.payload.PAKE)));
-        if (pake.TID !== this.session.username) throw new Error("verification for another session");
+        if (pake.TID !== session.username) throw new Error("verification for another session");
         if (pake.MSG.toString() !== MSGType.ServerVerification.toString()) throw new Error("unexpected server message");
         if (pake.ErrCode === 1) throw new Error("Incorrect code");
         if (pake.ErrCode !== 0 && pake.ErrCode !== undefined) throw new Error(`verification error ${pake.ErrCode}`);
 
-        const hamk = await this.session.computeHMAC(m);
-        if (!constantTimeEqual(this.session.deserialize(pake.HAMK), hamk))
+        const hamk = await session.computeHMAC(m);
+        this._assertSession(session, epoch, false);
+        if (!constantTimeEqual(session.deserialize(pake.HAMK), hamk))
           throw new Error("server HAMK mismatch");
 
         this._setState(State.Unlocked);
@@ -346,39 +403,50 @@ export class ApplePasswords {
         // the helper burns the challenge on a failed verify, so this code is dead now.
         // drop it - hasChallenge goes false and the next attempt gets a fresh prompt.
         // the session itself can be gone already if the port dropped mid-verify
-        if (this.session) {
-          this.session.sharedKey = undefined;
-          this.session._encryptionKey = undefined;
-          this.session.serverPublicKey = undefined;
-          this.session.salt = undefined;
+        if (this.session === session) {
+          session.sharedKey = undefined;
+          session._encryptionKey = undefined;
+          session.serverPublicKey = undefined;
+          session.salt = undefined;
         }
         this._challengeAt = 0;
         throw e;
       }
-    });
+    }, { signal });
   }
 
   async _encryptedQuery(cmd, tabId, hostname, payloadBody, timeoutMs) {
-    const sdata = this.session.serialize(await this.session.encrypt(payloadBody));
+    const session = this.session;
+    const epoch = this.epoch;
+    this._assertSession(session, epoch);
+    const sdata = session.serialize(await session.encrypt(payloadBody));
+    this._assertSession(session, epoch);
     const reply = await this._send(
       cmd,
       {
         tabId,
         frameId: 0,
         url: hostname,
-        payload: { QID: cmd === Command.GET_LOGIN_NAMES_FOR_URL ? "CmdGetLoginNames4URL" : "CmdGetPassword4LoginName", SMSG: JSON.stringify({ TID: this.session.username, SDATA: sdata }) },
+        payload: { QID: cmd === Command.GET_LOGIN_NAMES_FOR_URL ? "CmdGetLoginNames4URL" : "CmdGetPassword4LoginName", SMSG: JSON.stringify({ TID: session.username, SDATA: sdata }) },
       },
       timeoutMs,
     );
 
-    let smsg = reply.payload.SMSG;
-    if (typeof smsg === "string") smsg = JSON.parse(smsg);
-    if (smsg.TID !== this.session.username) throw new Error("response for another session");
-    const data = await this.session.decrypt(this.session.deserialize(smsg.SDATA));
-    return JSON.parse(bytesToUtf8(data));
+    try {
+      this._assertSession(session, epoch);
+      let smsg = reply.payload.SMSG;
+      if (typeof smsg === "string") smsg = JSON.parse(smsg);
+      if (smsg.TID !== session.username) throw new Error("response for another session");
+      const data = await session.decrypt(session.deserialize(smsg.SDATA));
+      this._assertSession(session, epoch);
+      return JSON.parse(bytesToUtf8(data));
+    } catch (error) {
+      if (this.session === session && this.epoch === epoch) this.disconnect(error);
+      throw error;
+    }
   }
 
-  async getLoginNamesForURL(tabId, url) {
+  async getLoginNamesForURL(tabId, url, { signal } = {}) {
     if (!this.ready) throw new Error("not unlocked");
     const { hostname } = new URL(url);
     return this._withLock(async () => {
@@ -392,11 +460,11 @@ export class ApplePasswords {
       if (res.STATUS === QueryStatus.Success)
         return (res.Entries ?? []).map((e) => ({ username: e.USR, sites: e.sites }));
       if (res.STATUS === QueryStatus.NoResults) return [];
-      throw queryStatusError(res.STATUS);
-    });
+      throw this._queryError(res.STATUS);
+    }, { signal, timeoutMs: 8000 });
   }
 
-  async getPasswordForLoginName(tabId, url, loginName) {
+  async getPasswordForLoginName(tabId, url, loginName, { signal } = {}) {
     if (!this.ready) throw new Error("not unlocked");
     const { hostname } = new URL(url);
     return this._withLock(async () => {
@@ -421,67 +489,70 @@ export class ApplePasswords {
         throw error;
       }
       if (res.STATUS === QueryStatus.Success) {
-        const e = (res.Entries ?? [])[0];
+        const e = (res.Entries ?? []).find((entry) => entry.USR === loginName.username);
         if (!e) return undefined;
         // apple's reply is USR/PWD/customTitle/highLevelDomain/sites - no note or OTP seed (verified), cant surface those
         return { username: e.USR, password: e.PWD, sites: e.sites };
       }
       if (res.STATUS === QueryStatus.NoResults) return undefined;
-      throw queryStatusError(res.STATUS);
-    });
+      throw this._queryError(res.STATUS);
+    }, { signal, timeoutMs: PASSWORD_READ_TIMEOUT_MS + 8000 });
   }
 
-  // save or update a login in Apple Passwords. cmd 6 with ACT maybeAdd lets the helper
-  // decide add-vs-update and drive the native macOS save prompt (with Touch ID). the
-  // helper's cmd-6 reply carries no decryptable body so we dont parse one - a page can
-  // only ever trigger the OS prompt, never write to the vault silently
-  async saveLogin(tabId, url, username, password) {
+  // Apple's client posts cmd 6 without awaiting a reply. Waiting here blocks all
+  // queries and eventually closes the native confirmation UI. A successful post
+  // is only handoff; it does not establish that the user saved the credential.
+  async saveLogin(tabId, url, username, password, { signal, expiresAt = Infinity, frameId = 0 } = {}) {
     if (!this.ready) throw new Error("not unlocked");
     if (!password) throw new Error("no password to save");
-    const { hostname } = new URL(url);
+    const { host } = new URL(url);
     return this._withLock(async () => {
-      const sdata = this.session.serialize(
-        await this.session.encrypt({
+      const session = this.session;
+      const epoch = this.epoch;
+      this._assertSession(session, epoch);
+      if (Date.now() >= expiresAt) throw new Error("save expired");
+      const sdata = session.serialize(
+        await session.encrypt({
           ACT: Action.MAYBE_ADD,
           URL: "",
           USR: "",
           PWD: "",
-          NURL: hostname,
+          NURL: host,
           NUSR: username ?? "",
           NPWD: password,
         }),
       );
+      this._assertSession(session, epoch);
+      if (Date.now() >= expiresAt) throw new Error("save expired");
       const body = {
         tabId,
-        frameId: 0,
-        payload: {
-          QID: "CmdNewAccount4URL",
-          SMSG: JSON.stringify({ TID: this.session.username, SDATA: sdata }),
-        },
+        frameId,
+        payload: JSON.stringify({
+          QID: "CmdSetPassword4LoginName_URL",
+          SMSG: JSON.stringify({ TID: session.username, SDATA: sdata }),
+        }),
       };
-      // the ack is empty and user confirmation happens in the native prompt, so a
-      // missing or slow ack is not an error
       try {
-        await this._send(Command.SET_PASSWORD_FOR_LOGIN_NAME_URL, body, 3000);
-      } catch (e) {
-        if (!/timeout/i.test(String(e?.message ?? e))) throw e;
+        this.port.postMessage({ cmd: Command.SET_PASSWORD_FOR_LOGIN_NAME_URL, ...body });
+      } catch (error) {
+        error.mayHaveBeenSent = true;
+        this.disconnect(error);
+        throw error;
       }
       return true;
-    });
+    }, { signal });
   }
 
-  disconnect() {
+  disconnect(error = new Error("connection closed")) {
     const port = this.port;
     if (!port) {
-      this._dropConnection(undefined, State.Disconnected);
+      this._dropConnection(undefined, State.Disconnected, error);
       return;
     }
     try {
       port.postMessage({ cmd: Command.END });
     } catch (_) {}
-    try {
-      port.disconnect();
-    } catch (_) {}
-    this._dropConnection(port, State.Disconnected);
+    this._dropConnection(port, State.Disconnected, error);
+    try { port.disconnect(); } catch (_) {}
   }
 }

@@ -18,6 +18,7 @@ const ok = (name, cond, detail = "") => {
 
 const SRC = new URL("../../src/", import.meta.url);
 const { SRPSession } = await import(new URL("srp.js", SRC));
+const { beginInlineUnlock } = await import(new URL("unlock-flow.js", SRC));
 const crypt = await import(new URL("crypto.js", SRC));
 const { sha256, bigIntToBytes, bytesToBigInt, padBytes, utf8ToBytes, concatBytes, mod, powmod } = crypt;
 
@@ -76,8 +77,8 @@ class SrpServer {
 
 // --- fake native host ------------------------------------------------------------------
 // one code per challenge, and a failed verify burns it, like the real helper
-function makeHost({ salts, pins }) {
-  const state = { codesShown: [], clientHellos: [], challenges: 0, server: null, live: false };
+function makeHost({ salts, pins, useBase64 = false, protocol = 1, wrongTid = false, wrongHamk = false }) {
+  const state = { codesShown: [], clientHellos: [], challenges: 0, server: null, live: false, codeWindowOpen: false };
   let saltIdx = 0;
   let pinIdx = 0;
 
@@ -94,11 +95,11 @@ function makeHost({ salts, pins }) {
   const reply = (m) => port._listeners.forEach((fn) => fn(m));
   const b64 = (o) => Buffer.from(JSON.stringify(o), "utf8").toString("base64");
   const unb64 = (s) => JSON.parse(Buffer.from(s, "base64").toString("utf8"));
-  const hex = (bytes) => "0x" + crypt.bytesToHex(bytes);
-  const unhex = (s) => crypt.hexToBytes(String(s).replace(/^0x/, ""));
+  const hex = (bytes) => useBase64 ? crypt.bytesToBase64(bytes) : "0x" + crypt.bytesToHex(bytes);
+  const unhex = (s) => useBase64 ? crypt.base64ToBytes(s) : crypt.hexToBytes(s);
 
   async function handle(msg) {
-    if (msg.cmd === 14) return reply({ cmd: 14, capabilities: { shouldUseBase64: false } });
+    if (msg.cmd === 14) return reply({ cmd: 14, capabilities: { shouldUseBase64: useBase64 } });
     if (msg.cmd !== 2) return;
     const pake = unb64(msg.msg.PAKE);
 
@@ -108,12 +109,13 @@ function makeHost({ salts, pins }) {
       const pin = pins[Math.min(pinIdx++, pins.length - 1)];
       const salt = salts[Math.min(saltIdx++, salts.length - 1)];
       state.codesShown.push(pin);
+      state.codeWindowOpen = true;
       state.server = new SrpServer({ pin, salt });
       state.live = true;
       const { B, s } = await state.server.start(pake.TID, bytesToBigInt(unhex(pake.A)));
       return reply({
         cmd: 2,
-        payload: { PAKE: b64({ TID: pake.TID, MSG: 1, PROTO: 1, B: hex(bigIntToBytes(B)), s: hex(s) }) },
+        payload: { PAKE: b64({ TID: wrongTid ? "wrong" : pake.TID, MSG: 1, PROTO: protocol, B: hex(bigIntToBytes(B)), s: hex(s) }) },
       });
     }
 
@@ -126,7 +128,7 @@ function makeHost({ salts, pins }) {
       return reply({ cmd: 2, payload: { PAKE: b64({ TID: pake.TID, MSG: 3, ErrCode: 1 }) } });
     }
     const hamk = await state.server.hamk(got);
-    return reply({ cmd: 2, payload: { PAKE: b64({ TID: pake.TID, MSG: 3, ErrCode: 0, HAMK: hex(hamk) }) } });
+    return reply({ cmd: 2, payload: { PAKE: b64({ TID: pake.TID, MSG: 3, ErrCode: 0, HAMK: hex(wrongHamk ? new Uint8Array(32) : hamk) }) } });
   }
 
   globalThis.chrome = { runtime: { connectNative: () => port, lastError: undefined } };
@@ -277,6 +279,48 @@ async function freshClient() {
   let err = null;
   await c.verifyPin(host.codesShown[0]).catch((e) => (err = e));
   ok("an expired code re-prompts", err?.code === "challenge_reissued" && host.challenges === 2, `${err?.code} challenges=${host.challenges}`);
+}
+
+for (const variant of [
+  { name: "Base64 transport completes the full PIN handshake", useBase64: true, success: true },
+  { name: "protocol downgrade is rejected", protocol: 0 },
+  { name: "another TID is rejected", wrongTid: true },
+  { name: "invalid server authentication proof is rejected", wrongHamk: true },
+]) {
+  makeHost({ salts: [plainSalt()], pins: ["123456"], ...variant });
+  const c = await freshClient();
+  let error;
+  try { await c.requestChallenge(); await c.verifyPin("123456"); } catch (e) { error = e; }
+  ok(variant.name, variant.success ? c.ready && !error : !c.ready && !!error, String(error));
+  c.disconnect();
+}
+
+// The user dismisses the system window while the client still holds an unexpired challenge.
+// Clicking the inline unlock entry must explicitly issue a new code, even if openPopup works.
+{
+  const host = makeHost({ salts: [plainSalt(), plainSalt()], pins: ["111111", "222222"] });
+  const c = await freshClient();
+  await c.requestChallenge();
+  host.codeWindowOpen = false;
+  ok("dismissing the code window does not invalidate the cached SRP challenge", c.hasChallenge && !host.codeWindowOpen);
+  let reused;
+  const response = await beginInlineUnlock(c, () => c.connect(), async () => {
+    ok("inline unlock requests a fresh code before opening the popup", host.challenges === 2 && host.codeWindowOpen);
+    reused = await c.requestChallenge({ ifNeeded: true });
+  });
+  ok("popup initialization reuses the inline request without issuing a third code", response.popupOpened && response.challengeReady && reused === false && host.challenges === 2);
+  await c.verifyPin("222222");
+  ok("the code from a reopened inline unlock can unlock the session", c.ready);
+  await beginInlineUnlock(c, () => c.connect(), async () => {});
+  ok("opening an already-unlocked session does not request another code", c.ready && host.challenges === 2);
+  c.disconnect();
+}
+{
+  const host = makeHost({ salts: [plainSalt()], pins: ["123456"] });
+  const c = await freshClient();
+  const response = await beginInlineUnlock(c, () => c.connect(), async () => { throw new Error("popup unavailable"); });
+  ok("a failed popup open still leaves a requested code for toolbar entry", !response.popupOpened && response.challengeReady && host.challenges === 1 && host.codeWindowOpen);
+  c.disconnect();
 }
 
 const failed = results.filter((r) => !r.cond);

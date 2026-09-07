@@ -176,6 +176,7 @@ export class SRPSession {
   // the IV as the first 16 bytes (bitSlice(e,0,keyLen)), Firefox ref does the same.
   // asymmetric with encrypt() on purpose, we never decrypt our own output
   async decrypt(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length < 32) throw new Error("truncated encrypted message");
     const key = await this.getEncryptionKey();
     if (!key) throw new Error("missing encryption key");
     const iv = bytes.slice(0, 16);

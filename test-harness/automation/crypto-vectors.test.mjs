@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
@@ -35,6 +36,24 @@ check(
 const firstKey = await session.getEncryptionKey();
 const secondKey = await session.getEncryptionKey();
 check("derived AES CryptoKey is cached per SRP session", firstKey === secondKey);
+
+for (const bad of ["gg", "0x12zz", "12 34", "-1", null]) assert.throws(() => hexToBytes(bad));
+const { base64ToBytes } = await import("../../src/crypto.js");
+for (const bad of ["!abc", "a", "a===", "AA=A", "AAAA\n", "AB==", null]) assert.throws(() => base64ToBytes(bad));
+check("malformed hex and Base64 are rejected", true);
+for (const B of [0n, -1n, GROUP_PRIME, GROUP_PRIME+1n]) assert.throws(() => session.setServerPublicKey(B, new Uint8Array([1])));
+assert.throws(() => session.setServerPublicKey(1n, new Uint8Array()));
+check("invalid SRP public keys and empty salts are rejected", true);
+const altered = concatBytes(iv, ciphertextAndTag); altered[altered.length-1] ^= 1;
+await assert.rejects(session.decrypt(altered));
+for (const size of [0, 1, 15, 16, 31, 32]) await assert.rejects(session.decrypt(new Uint8Array(size)));
+check("wrong authentication tags and truncated frames are rejected", true);
+const { bytesToUtf8 } = await import("../../src/crypto.js");
+assert.throws(() => bytesToUtf8(new Uint8Array([0xc0,0xaf])));
+check("malformed UTF-8 cannot silently change credential identity", true);
+const base64Session = new SRPSession(true);
+assert.deepEqual(base64Session.deserialize(base64Session.serialize(prime)), prime);
+check("Base64 session serialization preserves every byte", true);
 
 const passed = results.filter(Boolean).length;
 console.log(`\n==== ${passed}/${results.length} PASS ====`);

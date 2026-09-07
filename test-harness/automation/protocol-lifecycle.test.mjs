@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
@@ -24,6 +25,7 @@ function fakePort({ capabilities = {}, autoCapabilities = true } = {}) {
     drop() {
       disconnects.values.forEach((fn) => fn());
     },
+    emit(message) { messages.values.forEach(fn => fn(message)); },
     replyCapabilities() {
       messages.values.forEach((fn) => fn({ cmd: 14, capabilities }));
     },
@@ -128,6 +130,85 @@ function check(name, condition, detail = "") {
     .then(() => "resolved", (error) => error.message);
   check("password timeout tears down the ambiguous native stream", disconnected);
   check("password timeout returns an actionable error", message === "Password request timed out; try again", message);
+}
+
+
+// Every correlation-less command tears down its stream on timeout. Old port events
+// cannot complete a new request, even when the command number is identical.
+for (const cmd of [2, 4, 5, 6, 14]) {
+  const old = fakePort(), next = fakePort(); ports.push(old, next);
+  const c = new ApplePasswords(); await c.connect();
+  // Capabilities normally auto-reply; disable them just for this pending operation.
+  if (cmd === 14) old.postMessage = () => {};
+  await assert.rejects(c._send(cmd, {}, 8), /timeout/);
+  assert.equal(c.port, undefined);
+  await c.connect();
+  if (cmd === 14) next.postMessage = () => {};
+  let done = false;
+  const request = c._send(cmd, {}, 1000).then(value => { done = true; return value; });
+  old.emit({cmd, value:'old'}); await Promise.resolve(); assert.equal(done, false);
+  next.emit({cmd, value:'new'}); assert.equal((await request).value, 'new');
+  check(`command ${cmd}: timeout drops stream and late replies cannot cross connections`, true);
+  c.disconnect();
+}
+{
+  const port = fakePort(); ports.push(port); const c = new ApplePasswords(); await c.connect();
+  const first = c._withLock(() => c._send(4, {}, null));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  let queuedRan = false;
+  const queued = c._withLock(() => { queuedRan = true; });
+  port.emit({cmd:10});
+  await assert.rejects(first); await assert.rejects(queued);
+  assert.equal(queuedRan, false); assert.equal(c._waiters.size,0);assert.equal(c.ready,false);
+  check('RELOGIN_NEEDED cancels waiters and prevents queued operations from starting',true);
+}
+{
+  const c = new ApplePasswords(); let finish;
+  const first = c._withLock(() => new Promise(resolve => finish = resolve));
+  const controller = new AbortController();
+  const second = c._withLock(() => { throw new Error('cancelled queued function ran'); }, {signal:controller.signal});
+  controller.abort(); await assert.rejects(second);
+  let thirdRan = false;
+  const third = c._withLock(() => { thirdRan = true; });
+  await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(thirdRan,false);
+  finish(); await Promise.all([first,third]);
+  check('cancelling a queued caller never lets its successor overtake the active request',true);
+}
+{
+  const port = fakePort(); ports.push(port); const c = new ApplePasswords(); await c.connect();
+  c.session.sharedKey=1n;c.state='unlocked'; c._encryptedQuery=async()=>({STATUS:9});
+  const states=[];c.onStateChange(state=>states.push(state));
+  await assert.rejects(c.getLoginNamesForURL(1,'https://a.test'));
+  assert.equal(c.ready,false);assert.equal(c.session,undefined);assert.deepEqual(states,['disconnected']);
+  check('InvalidSession drops the session and publishes a cache-clearing state transition',true);
+}
+{
+  const c = new ApplePasswords();let finish;
+  const first=c._withLock(()=>new Promise(resolve=>finish=resolve));
+  let ran=false;const expired=c._withLock(()=>{ran=true;},{timeoutMs:5});
+  await assert.rejects(expired,/timed out/);finish();await first;
+  assert.equal(ran,false);check('queue time counts toward the request deadline',true);
+}
+
+for (const mode of ['wrong-TID', 'bad-tag', 'truncated', 'invalid-encoding']) {
+  const port = fakePort();ports.push(port);const c=new ApplePasswords();await c.connect();
+  const session=c.session;session.sharedKey=1n;c.state='unlocked';
+  c._send=async()=>({payload:{SMSG:{TID:mode==='wrong-TID'?'other-session':session.username,
+    SDATA:mode==='bad-tag'?'00'.repeat(48):mode==='truncated'?'00':'not hex'}}});
+  await assert.rejects(c._encryptedQuery(4,1,'example.com',{},100));
+  assert.equal(c.ready,false);assert.equal(c.session,undefined);
+  check(`${mode} encrypted response fails closed and invalidates the session`,true);
+}
+{
+  const port=fakePort();ports.push(port);const c=new ApplePasswords();await c.connect();
+  const session=c.session;session.sharedKey=1n;c.state='unlocked';
+  let finish;session.encrypt=async()=>new Uint8Array();session.decrypt=()=>new Promise(resolve=>finish=resolve);
+  c._send=async()=>({payload:{SMSG:{TID:session.username,SDATA:'00'}}});
+  const query=c._encryptedQuery(4,1,'example.com',{},100);
+  await new Promise(resolve=>setTimeout(resolve,0));port.emit({cmd:10});
+  finish(new TextEncoder().encode('{"STATUS":0,"Entries":[]}'));
+  await assert.rejects(query,/session changed/);assert.equal(c.ready,false);
+  check('invalidation during asynchronous decryption rejects the stale result',true);
 }
 
 const passed = results.filter(Boolean).length;

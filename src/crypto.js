@@ -3,7 +3,8 @@
 // Uint8Array + bigint + WebCrypto, no Node Buffer. see NOTICE
 
 export function hexToBytes(hex) {
-  if (hex.startsWith("0x")) hex = hex.slice(2);
+  if (typeof hex !== "string" || !/^(?:0x)?[0-9a-f]*$/i.test(hex)) throw new Error("invalid hex encoding");
+  if (/^0x/i.test(hex)) hex = hex.slice(2);
   if (hex.length % 2) hex = "0" + hex;
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -17,7 +18,11 @@ export function bytesToHex(bytes) {
 }
 
 export function base64ToBytes(b64) {
+  if (typeof b64 !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b64)) {
+    throw new Error("invalid base64 encoding");
+  }
   const bin = atob(b64);
+  if (btoa(bin) !== b64) throw new Error("non-canonical base64 encoding");
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
@@ -34,7 +39,7 @@ export function utf8ToBytes(str) {
 }
 
 export function bytesToUtf8(bytes) {
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 
 export function concatBytes(...arrays) {
@@ -137,5 +142,7 @@ export function queryStatusError(status) {
     8: "Unknown action",
     9: "Invalid session",
   };
-  return new Error(map[status] ?? `Query error: status ${status}`);
+  const error = new Error(map[status] ?? `Query error: status ${status}`);
+  error.status = status;
+  return error;
 }
