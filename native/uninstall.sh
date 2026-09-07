@@ -10,5 +10,6 @@ for d in "$SUPPORT/Google/Chrome"* "$SUPPORT/Microsoft Edge" "$SUPPORT/Chromium"
 done
 # Remove only files this installer creates; leave an unexpected non-empty directory alone.
 rm -f "$SUPPORT/FAPassword/fapassword-policy.py" "$SUPPORT/FAPassword/FAPassword-HidePasswordManager.mobileconfig"
+rm -f "$SUPPORT/FAPassword"/FAPassword-HidePasswordManager-*.mobileconfig
 rmdir "$SUPPORT/FAPassword" 2>/dev/null || true
 echo "Removed the FAPassword helper. If its configuration profile is installed, remove it in System Settings > General > Device Management, then restart your browser."

@@ -1,5 +1,5 @@
 #!/bin/sh
-# registers the "hide password manager" policy helper as a native messaging host for every
+# registers the Passwords launcher / browser-policy helper as a native messaging host for every
 # chromium browser found (incl brave Origin/Beta). run once after cloning. macOS only
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,7 +23,7 @@ register() {
   cat > "$d/com.fapassword.policy.json" <<EOF
 {
   "name": "com.fapassword.policy",
-  "description": "FAPassword policy helper",
+  "description": "FAPassword Passwords launcher and policy helper",
   "path": "$HELPER",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://$EXT_ID/"]
@@ -42,4 +42,4 @@ done
 
 echo
 echo "Helper installed to $HELPER ($found browser(s))"
-echo "Now FULLY QUIT and reopen your browser (Cmd+Q), then use the popup toggle."
+echo "Now FULLY QUIT and reopen your browser (Cmd+Q), then use Open Apple Passwords or the policy toggle."
