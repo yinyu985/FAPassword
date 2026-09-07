@@ -1,5 +1,5 @@
-import { rm } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const configured = process.env.FAPASSWORD_PLAYWRIGHT;
@@ -20,21 +20,42 @@ export const chromium = new Proxy(rawChromium, {
     if (property !== "launchPersistentContext") return Reflect.get(target, property);
     return async (userDataDir, options = {}) => {
       const executablePath = process.env.FAPASSWORD_BROWSER_EXECUTABLE;
-      const context = await target.launchPersistentContext(userDataDir, {
+      const ownedDirectory = await mkdtemp(join(tmpdir(), "fapassword-browser-"));
+      let context;
+      try {
+      context = await target.launchPersistentContext(ownedDirectory, {
         ...options,
+        ...(options.headless ? { args: [...(options.args || []), "--headless=new"] } : {}),
         ...(executablePath ? { executablePath } : {}),
       });
       const close = context.close.bind(context);
+      let closed = false;
       context.close = async () => {
+        if (closed) return;
+        closed = true;
         try {
           await close();
         } finally {
-          const path = resolve(userDataDir);
-          const safePrefix = ["op-", "fapassword-"].some((prefix) => basename(path).startsWith(prefix));
-          if (safePrefix && path.startsWith(resolve(tmpdir()) + "/")) await rm(path, { recursive: true, force: true });
+          await rm(ownedDirectory, { recursive: true, force: true });
         }
       };
+      const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker", { timeout: 15000 });
+      const kind = await worker.evaluate(() => globalThis.testNative?.kind);
+      if (!kind) throw new Error("Browser regression requires a simulated native transport; refusing a live vault");
+      if (kind !== "locked") {
+        const popup = await context.newPage();
+        await popup.goto(new URL("popup.html", worker.url()).href);
+        await popup.locator("#view-pin:not([hidden]) #pin:enabled").waitFor({ state: "visible" });
+        await popup.fill("#pin", "123456");
+        await popup.waitForSelector("#view-unlocked:not([hidden])");
+        await popup.close();
+      }
       return context;
+      } catch (error) {
+        if (context) await context.close();
+        await rm(ownedDirectory, { recursive: true, force: true });
+        throw error;
+      }
     };
   },
 });

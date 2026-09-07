@@ -3,10 +3,12 @@ import { chromium } from "./e2e-playwright.mjs";
 
 const extension = fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
 const base = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
-const context = await chromium.launchPersistentContext(`/tmp/fapassword-save-${Date.now()}`, {
+const context = await chromium.launchPersistentContext("unused", {
   headless: true,
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--no-first-run"],
 });
+try {
+
 const worker = context.serviceWorkers()[0] || (await context.waitForEvent("serviceworker"));
 const page = await context.newPage();
 await page.goto(`${base}/login-standard.html`, { waitUntil: "domcontentloaded" });
@@ -28,4 +30,6 @@ console.log(
   pass ? "PASS scripted requestSubmit is ignored; a real user submit is accepted" : "FAIL save intent gate",
   { scripted, userDriven },
 );
-process.exit(pass ? 0 : 1);
+process.exitCode = (pass ? 0 : 1);
+
+} finally { await context.close(); }

@@ -9,15 +9,19 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        node: [18, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - run: npm run test:native
       - name: Build reproducibly
         run: |
           npm run build
@@ -25,3 +29,41 @@ jobs:
           npm run build
           second="$(find dist -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
           test "$first" = "$second"
+
+  browser:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.42.1 ships Chromium 123, the manifest's minimum supported browser.
+        playwright: [1.42.1, 1.62.1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Install the explicit test browser prerequisite
+        run: |
+          npm install --prefix "$RUNNER_TEMP/fapassword-tools" --no-package-lock --no-audit --no-fund playwright@${{ matrix.playwright }}
+          node "$RUNNER_TEMP/fapassword-tools/node_modules/playwright/cli.js" install --with-deps chromium
+      - run: npm run build
+      - name: Test the installable artifact with simulated native transport
+        run: |
+          export FAPASSWORD_PLAYWRIGHT="$RUNNER_TEMP/fapassword-tools/node_modules/playwright/index.mjs"
+          export FAPASSWORD_BROWSER_EXECUTABLE="$(node -e 'process.stdout.write(require(process.env.RUNNER_TEMP + "/fapassword-tools/node_modules/playwright").chromium.executablePath())')"
+          export FAPASSWORD_BUILD_SOURCE="$PWD/dist/fapassword-$(node -p 'require("./manifest.json").version')"
+          npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence-${{ matrix.playwright }}
+          path: test-harness/automation/shots
+
+  native:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native policy behavior and real CoreFoundation read
+        run: python3 test-harness/automation/native-policy.test.py

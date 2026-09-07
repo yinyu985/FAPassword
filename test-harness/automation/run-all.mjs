@@ -8,6 +8,11 @@ await import("./e2e-playwright.mjs"); // fail before starting anything if the ca
 const here = dirname(fileURLToPath(import.meta.url));
 const base = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
 const drivers = [
+  ["Real toolbar icon API, connection and recovery", "drive-toolbar.mjs"],
+  ["Inline layout and stable repeated popup refresh", "drive-experience.mjs"],
+  ["Popup theme, contrast and zoom checks", "drive-visual.mjs"],
+  ["Closed-shadow suggestion clickjacking", "drive-redress.mjs"],
+  ["Production security, save, UI and lifecycle regressions", "drive-security.mjs"],
   ["UI suite (login/OTP/forum, offer flow)", "drive.mjs"],
   ["Adversarial field classification", "drive-adversarial.mjs"],
   ["Combined positive/negative testbench", "drive-bench.mjs"],

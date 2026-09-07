@@ -1,40 +1,34 @@
-// security regression: cross-origin iframe must not get an autofill offer
-// confused-deputy leak from all_frames: a foreign sub-frame could fill the top page password
-import { fileURLToPath } from "url";
+import assert from "node:assert/strict";
 import { chromium } from "./e2e-playwright.mjs";
-const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
-const BASE = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
-
-const ctx = await chromium.launchPersistentContext("/tmp/fapassword-xo-" + Date.now(), {
-  headless: false,
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--headless=new", "--no-first-run"],
+import { fileURLToPath } from "node:url";
+const extension = fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
+const base = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
+const context = await chromium.launchPersistentContext("unused", {
+  headless: true, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
 });
-ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }).catch(() => null));
-const page = await ctx.newPage();
-// top page on 127.0.0.1, inject iframe from a different origin (openpw.test)
-await page.goto(`${BASE}/login-standard.html`, { waitUntil: "domcontentloaded" });
-await page.evaluate(() => {
-  const f = document.createElement("iframe");
-  f.id = "xf";
-  f.style = "width:600px;height:300px";
-  f.src = "http://openpw.test:8799/iframe-pages/iframe-login.html";
-  document.body.appendChild(f);
-});
-await page.waitForTimeout(1200);
-const xframe = page.frames().find((f) => f.url().includes("openpw.test") && f.url().includes("iframe-login"));
-if (!xframe) {
-  console.log("PASS (cross-origin frame did not load; no offer possible)");
-  await ctx.close();
-  process.exit(0);
-}
-await xframe
-  .locator('input[name="username"], input[autocomplete="username"], input[type="text"]')
-  .first()
-  .click()
-  .catch(() => {});
-await page.waitForTimeout(700);
-const dd = await xframe.locator('[data-fapassword="suggestions"]').count();
-const pass = dd === 0;
-console.log(pass ? "PASS cross-origin iframe shows NO offer (leak closed)" : `FAIL cross-origin iframe got an offer (${dd})`);
-await ctx.close();
-process.exit(pass ? 0 : 1);
+try {
+  const page = await context.newPage();
+  await page.goto(`${base}/login-standard.html`);
+  const other = new URL("/iframe-pages/iframe-login.html", base);
+  other.hostname = other.hostname === "localhost" ? "127.0.0.1" : "localhost";
+  await page.evaluate((url) => {
+    const frame = document.createElement("iframe"); frame.id = "xf";
+    frame.width = "600"; frame.height = "300"; frame.src = url; document.body.appendChild(frame);
+  }, other.href);
+  const username = page.frameLocator("#xf").locator('input[name="username"]');
+  await username.waitFor({ state: "visible" });
+  const frame = page.frames().find((value) => value.url() === other.href);
+  assert.ok(frame, "the cross-origin frame must actually load");
+  // Browser metadata proves the production content script registered in that document.
+  const worker = context.serviceWorkers()[0];
+  await username.click();
+  await page.waitForTimeout(150);
+  assert.ok(await worker.evaluate(url => testNative.frames.some(f => f.url === url && f.frameId > 0 && f.documentId), other.href), "content script must register in the loaded cross-origin document");
+  const before = await worker.evaluate(() => testNative.counters.names);
+  await username.press("Tab");
+  await username.click();
+  await page.waitForTimeout(250);
+  assert.equal(await frame.locator('[data-fapassword-host]').count(), 0);
+  assert.equal(await worker.evaluate(() => testNative.counters.names), before);
+  console.log("PASS loaded cross-origin iframe has no account query or suggestion");
+} finally { await context.close(); }

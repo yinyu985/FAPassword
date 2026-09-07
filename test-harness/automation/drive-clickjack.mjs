@@ -1,10 +1,12 @@
 import { fileURLToPath } from "url";
 import { chromium } from "./e2e-playwright.mjs";
 const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
-const ctx=await chromium.launchPersistentContext("/tmp/fapassword-cj-"+Date.now(),{headless:false,args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`,"--headless=new","--no-first-run"]});
-ctx.serviceWorkers()[0]||await ctx.waitForEvent("serviceworker",{timeout:10000}).catch(()=>null);
+const ctx=await chromium.launchPersistentContext("unused",{headless:false,args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`,"--headless=new","--no-first-run"]});
+try {
+
+ctx.serviceWorkers()[0]||await ctx.waitForEvent("serviceworker",{timeout:10000});
 const page=await ctx.newPage();
-await page.goto("http://127.0.0.1:8799/clickjack.html",{waitUntil:"domcontentloaded"}); await page.waitForTimeout(300);
+await page.goto(`${process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799"}/clickjack.html`,{waitUntil:"domcontentloaded"}); await page.waitForTimeout(300);
 await page.evaluate(() => {
   const hidden = document.createElement("input");
   hidden.type = "password";
@@ -22,4 +24,6 @@ const hiddenValue=await page.inputValue('input[name="display-none-password"]').c
 const pass = pval==="" && hiddenValue==="";
 console.log(`offered on username: ${offered}; offscreen filled: ${!!pval}; display:none filled: ${!!hiddenValue}`);
 console.log(pass?"PASS #18 hidden password field not filled (clickjack defense)":"FAIL clickjack: hidden field got filled");
-await ctx.close(); process.exit(pass?0:1);
+await ctx.close(); process.exitCode = (pass?0:1);
+
+} finally { await ctx.close(); }

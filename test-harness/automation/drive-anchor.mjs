@@ -1,13 +1,15 @@
 import { fileURLToPath } from "url";
 import { chromium } from "./e2e-playwright.mjs";
 const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
-const ctx = await chromium.launchPersistentContext("/tmp/fapassword-anc-" + Date.now(), {
+const ctx = await chromium.launchPersistentContext("unused", {
   headless: false,
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--headless=new", "--no-first-run"],
 });
-ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }).catch(() => null));
+try {
+
+ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }));
 const page = await ctx.newPage();
-await page.goto("http://127.0.0.1:8799/testbench.html", { waitUntil: "domcontentloaded" });
+await page.goto(`${process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799"}/testbench.html`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(300);
 const box = () => page.locator('[data-fapassword="suggestions"]');
 await page.locator("#u2").click();
@@ -20,4 +22,6 @@ console.log(`after clicking offer on #u2:  u1="${u1}"  u2="${u2}"`);
 const pass = u2 === "test@example.com" && u1 === "";
 console.log(pass ? "PASS fill targets #u2 (the field acted on), not #u1" : "FAIL wrong field filled");
 await ctx.close();
-process.exit(pass ? 0 : 1);
+process.exitCode = (pass ? 0 : 1);
+
+} finally { await ctx.close(); }

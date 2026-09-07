@@ -1,10 +1,12 @@
 import { fileURLToPath } from "url";
 import { chromium } from "./e2e-playwright.mjs";
 const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
-const ctx=await chromium.launchPersistentContext("/tmp/fapassword-ev-"+Date.now(),{headless:false,args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`,"--headless=new","--no-first-run"]});
-ctx.serviceWorkers()[0]||await ctx.waitForEvent("serviceworker",{timeout:10000}).catch(()=>null);
+const ctx=await chromium.launchPersistentContext("unused",{headless:false,args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`,"--headless=new","--no-first-run"]});
+try {
+
+ctx.serviceWorkers()[0]||await ctx.waitForEvent("serviceworker",{timeout:10000});
 const page=await ctx.newPage();
-await page.goto("http://127.0.0.1:8799/login-standard.html",{waitUntil:"domcontentloaded"});
+await page.goto(`${process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799"}/login-standard.html`,{waitUntil:"domcontentloaded"});
 await page.evaluate(()=>{
   window.__ev={input:0,change:0};
   for(const sel of ['input[name=username]','input[name=password]']){
@@ -23,4 +25,6 @@ const pval=await page.inputValue('input[name=password]');
 console.log("events fired:",JSON.stringify(ev),"username:",uval,"password:",pval?"(filled)":"(empty)");
 const pass = ev.input>=2 && ev.change>=2 && uval==="test@example.com" && pval.length>0;
 console.log(pass?"PASS #9 input+change events fire on fill (no 'edit a char' bug)":"FAIL");
-await ctx.close(); process.exit(pass?0:1);
+await ctx.close(); process.exitCode = (pass?0:1);
+
+} finally { await ctx.close(); }

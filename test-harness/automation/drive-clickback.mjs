@@ -4,10 +4,12 @@ import { fileURLToPath } from "url";
 import { chromium } from "./e2e-playwright.mjs";
 const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
 const BASE = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
-const ctx = await chromium.launchPersistentContext("/tmp/fapassword-cb-" + Date.now(), {
+const ctx = await chromium.launchPersistentContext("unused", {
   headless: false, args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--headless=new", "--no-first-run"],
 });
-ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }).catch(() => null));
+try {
+
+ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }));
 const page = await ctx.newPage();
 await page.goto(`${BASE}/testbench.html`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(300);
@@ -30,4 +32,6 @@ ok("dropdown reappears on every click-back", allShow);
 await ctx.close();
 const failed = results.filter((r) => !r).length;
 console.log(`\n==== ${results.length - failed}/${results.length} PASS ====`);
-process.exit(failed ? 1 : 0);
+process.exitCode = (failed ? 1 : 0);
+
+} finally { await ctx.close(); }

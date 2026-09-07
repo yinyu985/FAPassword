@@ -2,19 +2,21 @@ import { fileURLToPath } from "url";
 import { chromium } from "./e2e-playwright.mjs";
 const EXT = process.env.FAPASSWORD_EXT || fileURLToPath(new URL("./.builds/unlocked", import.meta.url));
 const BASE = process.env.FAPASSWORD_BASE || "http://127.0.0.1:8799";
-const ctx = await chromium.launchPersistentContext("/tmp/fapassword-if-" + Date.now(), {
+const ctx = await chromium.launchPersistentContext("unused", {
   headless: false, args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--headless=new", "--no-first-run"],
 });
-ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }).catch(() => null));
+try {
+
+ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 10000 }));
 const page = await ctx.newPage();
 await page.goto(`${BASE}/tricky.html`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(800);
 const results = [];
 const ok = (n, c) => { results.push(c); console.log((c ? "PASS " : "FAIL ") + n); };
 const frame = page.frames().find((f) => f.url().includes("iframe-login"));
-if (!frame) { console.log("FAIL: iframe-login frame not found"); await ctx.close(); process.exit(1); }
+if (!frame) { console.log("FAIL: iframe-login frame not found"); await ctx.close(); process.exitCode = (1); }
 const userInFrame = frame.locator('input[autocomplete="username"], input[name="username"], input[type="text"]').first();
-await userInFrame.click().catch(() => {});
+await userInFrame.click();
 await page.waitForTimeout(700);
 // dropdown renders inside the iframe document, not the top page
 const ddInFrame = await frame.locator('[data-fapassword="suggestions"]').count();
@@ -22,4 +24,6 @@ ok("same-origin iframe login: dropdown shows inside the frame", ddInFrame > 0);
 await ctx.close();
 const failed = results.filter((r) => !r).length;
 console.log(`\n==== ${results.length - failed}/${results.length} PASS ====`);
-process.exit(failed ? 1 : 0);
+process.exitCode = (failed ? 1 : 0);
+
+} finally { await ctx.close(); }
