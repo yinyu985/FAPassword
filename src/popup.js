@@ -52,27 +52,35 @@ function setupPrivacyToggle({ toggleId, rowId, noteId, service, storageKey, bloc
   const pref = chrome.privacy?.services?.[service];
   if (!pref?.get) return;
 
-  const render = () => {
-    pref.get({}, (detail) => {
-      if (chrome.runtime.lastError || !detail) return;
-      row.hidden = false;
-      toggle.checked = detail.value === false;
-      const controllable =
-        detail.levelOfControl === "controllable_by_this_extension" ||
-        detail.levelOfControl === "controlled_by_this_extension";
-      toggle.disabled = !controllable;
-      note.textContent = controllable ? "" : blockedText(detail.levelOfControl);
-    });
+  const renderDetail = (detail) => {
+    row.hidden = false;
+    toggle.checked = detail.value === false;
+    const controllable =
+      detail.levelOfControl === "controllable_by_this_extension" ||
+      detail.levelOfControl === "controlled_by_this_extension";
+    toggle.disabled = !controllable;
+    setNote(note, controllable ? "" : blockedText(detail.levelOfControl), !controllable);
   };
+  const render = () => pref.get({}, (detail) => {
+    if (chrome.runtime.lastError || !detail) return;
+    renderDetail(detail);
+  });
 
   toggle.addEventListener("change", () => {
     const on = toggle.checked;
+    toggle.disabled = true;
     chrome.storage?.local?.set({ [storageKey]: on });
-    const verify = () =>
+    const verify = () => {
+      const writeFailed = !!chrome.runtime.lastError;
       pref.get({}, (detail) => {
-        render();
-        if (on && detail && detail.value !== false) note.textContent = t(refusedText);
+        const readFailed = !!chrome.runtime.lastError;
+        if (detail && !readFailed) renderDetail(detail);
+        else toggle.disabled = false;
+        if (writeFailed || readFailed || !detail || detail.value !== !on) {
+          setNote(note, t(refusedText), true);
+        }
       });
+    };
     if (on) pref.set({ value: false }, verify);
     else pref.clear({}, verify);
   });
@@ -103,13 +111,13 @@ async function renderPolicyToggle() {
   const r = await policyMsg("get");
   if (r.error || !r.ok || r.scopeVersion !== 2) {
     policyToggle.disabled = true;
-    policyNote.textContent = t("policyHelperNeeded");
+    setNote(policyNote, t("policyHelperNeeded"), true);
     return;
   }
   policyToggle.disabled = !!(r.managed && r.value === true);
   document.getElementById("policy-scope").textContent = t("policyScope", r.browserName);
   policyToggle.checked = !!r.hidden;
-  policyNote.textContent = r.managed && r.value === true ? t("controlledByPolicy") : "";
+  setNote(policyNote, r.managed && r.value === true ? t("controlledByPolicy") : "", r.managed && r.value === true);
 }
 
 policyToggle.addEventListener("change", async () => {
@@ -118,15 +126,15 @@ policyToggle.addEventListener("change", async () => {
   const r = await policyMsg(on ? "set" : "clear");
   policyToggle.disabled = false;
   if (r.error || !r.ok) {
-    policyNote.textContent = t("policyHelperFailed");
+    setNote(policyNote, t("policyHelperFailed"), true);
     policyToggle.checked = !on;
     return;
   }
   // reflect the REAL forced-policy state; the profile only sticks once approved
   policyToggle.checked = !!r.hidden;
-  if (on && !r.hidden) policyNote.textContent = t("approveProfile");
-  else if (!on && r.hidden) policyNote.textContent = t("removeProfile");
-  else policyNote.textContent = "";
+  if (on && !r.hidden) setNote(policyNote, t("approveProfile"));
+  else if (!on && r.hidden) setNote(policyNote, t("removeProfile"));
+  else setNote(policyNote);
 });
 
 renderPolicyToggle();
@@ -174,6 +182,10 @@ function updateControls() {
   for (const button of list.querySelectorAll("button")) button.disabled = busy || !loginResult?.targetId;
   refillBtn.disabled = busy;
 }
+function setNote(element, text = "", failed = false) {
+  element.textContent = text;
+  element.classList.toggle("failed", failed);
+}
 function setStatus(text = "", failed = false) {
   // One shared live region below the active view; empty text occupies no space.
   if (statusMessage.textContent !== text) statusMessage.textContent = text;
@@ -218,7 +230,7 @@ openPasswordsBtn.addEventListener("click", async () => {
 });
 
 generatePasswordBtn.addEventListener("click", () => {
-  const length = Math.min(64, Math.max(8, Number.parseInt(passwordLengthInput.value, 10) || 20));
+  const length = Math.min(64, Math.max(8, Number.parseInt(passwordLengthInput.value, 10) || 16));
   passwordLengthInput.value = String(length);
   generatedPasswordInput.value = globalThis.FAPASSWORD_PASSWORDS.custom(length, includeSpecialInput.checked);
   generatedPasswordPanel.hidden = false;
@@ -259,6 +271,7 @@ function render(state) {
   const seq = ++renderSeq;
   listOperation = fillOperation = loginResult = null;
   list.replaceChildren();
+  document.getElementById("site").hidden = true;
   setStatus();
   updateControls();
   setDot(state);
@@ -324,6 +337,7 @@ function renderLogins(seq = renderSeq, refresh = false) {
       }
       loginResult = result;
       const site = document.getElementById("site");
+      site.hidden = !result.logins.length;
       if (site.textContent !== result.host) site.textContent = result.host || "";
       refillBtn.hidden = !result.refill;
       if (result.refill) refillBtn.textContent = t("refillAccount", [result.refill.username || t("noUsername"), result.refill.host]);
@@ -417,6 +431,8 @@ function renderSaves(saves = []) {
   for (const save of saves) {
     const item = document.createElement("li");
     const text = document.createElement("p");
+    text.className = "notice";
+    text.classList.toggle("failed", ["failed", "uncertain", "expired"].includes(save.status) || save.messageKey === "saveNoAccount");
     text.textContent = `${save.host} · ${save.username || t("noUsername")} — ${t(save.messageKey || "saveQueued")}`;
     item.appendChild(text);
     if (["queued", "failed", "uncertain"].includes(save.status)) {

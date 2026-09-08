@@ -36,7 +36,7 @@
 
       <!-- Unlocked: logins for current site -->
       <section id="view-unlocked" hidden>
-        <p id="site" class="site"></p>
+        <p id="site" class="site" hidden></p>
         <ul id="logins" class="logins"></ul>
         <button id="refill" class="link" hidden></button>
       </section>
@@ -54,16 +54,14 @@
         <button id="generate-password" class="action-button" data-i18n="generatePassword" data-i18n-title="generatePassword" title="Generate a strong password">Generate password</button>
       </div>
       <div id="generated-password-panel" class="generated-password-panel" hidden>
-        <label for="generated-password" data-i18n="generatedPassword">Generated password</label>
         <div class="generator-options">
-          <label class="generator-option"><input id="include-special" type="checkbox" checked /> <span data-i18n="includeSpecialCharacters">Include special characters</span></label>
-          <label class="generator-option length-option"><span data-i18n="passwordLength">Length</span><input id="password-length" type="number" min="8" max="64" value="20" inputmode="numeric" /></label>
+          <label class="generator-option"><input id="include-special" type="checkbox" /> <span data-i18n="includeSpecialCharacters">Include special characters</span></label>
+          <label class="generator-option length-option"><span data-i18n="passwordLength">Length</span><input id="password-length" type="number" min="8" max="64" value="16" inputmode="numeric" /></label>
         </div>
         <div class="generated-password-row">
-          <input id="generated-password" type="text" readonly spellcheck="false" autocomplete="off" aria-describedby="generated-password-help" />
+          <input id="generated-password" type="text" readonly spellcheck="false" autocomplete="off" data-i18n-aria-label="generatedPassword" aria-label="Generated password" />
           <button id="copy-generated-password" class="copy-button" data-i18n="copyPassword">Copy</button>
         </div>
-        <span id="generated-password-help" class="subnote" data-i18n="generatedPasswordHelp">Use Copy to place it in the clipboard.</span>
       </div>
       <details class="settings-panel">
         <summary>

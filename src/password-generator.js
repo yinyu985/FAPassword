@@ -49,7 +49,7 @@
     return characters.join("");
   }
 
-  function custom(length = 20, includeSpecial = true) {
+  function custom(length = 16, includeSpecial = false) {
     if (!Number.isSafeInteger(length) || length < 8 || length > 128) {
       throw new RangeError("password length must be between 8 and 128");
     }

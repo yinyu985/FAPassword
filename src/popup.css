@@ -62,7 +62,6 @@ body {
 #save-list li { padding: 6px 0; border-top: 1px solid var(--line); }
 #save-list p { margin: 0 0 6px; overflow-wrap: anywhere; }
 #save-list button { width: auto; margin-right: 6px; }
-.scope-note { display: block; font-size: 11px; color: var(--muted); }
 
 header {
   min-height: 44px;
@@ -158,15 +157,17 @@ main {
   padding: 9px 12px;
 }
 
-.status-message {
+/* All notices share typography and spacing; only failures change color. */
+.status-message, .subnote:not(:empty), .scope-note:not(:empty), #save-list .notice {
+  display: block;
   margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  padding: 8px 0;
+  color: var(--fg);
+  font: 650 13px/1.45 var(--font);
   overflow-wrap: anywhere;
 }
-.status-message:not(:empty) { margin-top: 7px; }
-.status-message.failed { color: var(--danger); }
+.status-message:empty, .subnote:empty, .scope-note:empty { display: none; }
+.status-message.failed, .subnote.failed, #save-list .notice.failed { color: var(--danger); }
 .pin-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 4px; }
 .pin-row #verify { flex: 0 0 96px; width: 96px; min-height: 36px; padding: 0 6px; }
 
@@ -311,13 +312,6 @@ footer {
   border-bottom: 1px solid var(--line);
 }
 
-.generated-password-panel > label {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .generator-options {
   min-height: 27px;
   display: flex;
@@ -381,11 +375,6 @@ footer {
   padding: 0 10px;
   font-size: 11px;
   font-weight: 650;
-}
-
-.generated-password-panel .subnote:not(:empty) {
-  margin-top: 4px;
-  font-size: 11px;
 }
 
 .settings-panel summary {
@@ -469,25 +458,6 @@ footer {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
-.subnote { display: none; }
-
-.subnote:not(:empty) {
-  margin-top: 4px;
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-  width: max-content;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-.scope-note {
-  width: max-content;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
 .segmented-switch {
   position: relative;
   flex: 0 0 auto;

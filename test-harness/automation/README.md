@@ -71,6 +71,7 @@ frame registration and duplicate UI requests. `mock-background.js` has been remo
 iframe targeting, PIN state and popup failures. `drive-redress.mjs` retains closed Shadow DOM
 and uses real mouse/keyboard events against moved, transparent or covered suggestion hosts.
 `drive-visual.mjs` checks both theme contrast palettes and zoom, saving evidence in `shots/`.
+`drive-notices.mjs` checks English/Chinese notice typography, spacing and normal/error colors in both themes, empty-state host visibility, error recovery, refused privacy-toggle changes in both directions, generator defaults/options and clipboard feedback using a simulated popup API.
 `drive-experience.mjs` checks the account-first inline layout, bottom-right wordmark, invisible
 scrollbars with all entries reachable, repeated refresh without replacing account nodes or
 changing window height, failure recovery, unavailable documents and restrictive stylesheet CSP.

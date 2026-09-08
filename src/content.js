@@ -118,7 +118,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id) return false;
   if (message?.type === "fill") { respond(fillCredentials(message)); return false; }
   if (message?.type === "saveStatus") {
-    if (message.documentKey === documentKey && lastFocused?.isConnected) showStatus(lastFocused, tr(message.messageKey));
+    if (message.documentKey === documentKey && lastFocused?.isConnected) showStatus(lastFocused, tr(message.messageKey), null, ["saveFailed", "saveUncertain", "saveExpired", "saveNoAccount"].includes(message.messageKey));
     respond({ ok: true }); return false;
   }
   if (!["describeFrame", "prepareFill"].includes(message?.type)) return false;
@@ -277,7 +277,7 @@ function schedulePosition() {
   if (suggestionEl && !positionFrame) positionFrame = requestAnimationFrame(positionBox);
 }
 
-const UI_FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+const UI_FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif';
 function buildSuggestionBox(field) {
   removeSuggestion();
   anchorField = field;
@@ -362,13 +362,14 @@ function appendAccountRow(box, login, action) {
   return row;
 }
 
-function showStatus(field, text, retry) {
+function showStatus(field, text, retry, failed = false) {
   if (!field?.isConnected || !isVisible(field) || !documentActive) return;
   const box = buildSuggestionBox(field);
   if (!box) return;
   const status = document.createElement("p");
   status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
-  status.textContent = text; status.style.cssText = "margin:0;padding:9px 10px;overflow-wrap:anywhere";
+  status.textContent = text; status.style.cssText = `margin:0;padding:8px 0;font:650 13px/1.45 ${UI_FONT};overflow-wrap:anywhere;color:${failed ? "light-dark(#a2342f, #f19a94)" : "light-dark(#171a18, #f1f2ef)"}`;
+  box.style.padding = "0 10px";
   box.appendChild(status);
   if (retry) appendRow(box, tr("retry"), retry);
   else {
@@ -382,13 +383,13 @@ async function fillLogin(field, login) {
   removeSuggestion(true);
   let preparation;
   try { preparation = prepareFill(field); }
-  catch (error) { showStatus(field, tr(error.message)); return; }
+  catch (error) { showStatus(field, tr(error.message), null, true); return; }
   showStatus(field, tr("filling"));
   try {
     const response = await send({ type: "inlineFill", loginName: login, ...preparation });
     if (response?.ok && response.filled) removeSuggestion();
-    else showStatus(field, tr(response?.errorKey || "fillFailed"), () => buildOfferSuggestion(field));
-  } catch { showStatus(field, tr("errorConnection"), () => buildOfferSuggestion(field)); }
+    else showStatus(field, tr(response?.errorKey || "fillFailed"), () => buildOfferSuggestion(field), true);
+  } catch { showStatus(field, tr("errorConnection"), () => buildOfferSuggestion(field), true); }
 }
 
 function fillGeneratedPassword(field, password) {
@@ -415,7 +416,7 @@ async function buildOfferSuggestion(field) {
   try { result = await send({ type: "inlineLogins" }); } catch {}
   if (seq !== offerSeq || field !== deepActiveElement() || !isFillable(field)) return;
   const generator = isNewPasswordField(field);
-  if (!result?.ok) { showStatus(field, tr(result?.errorKey || "errorConnection"), () => buildOfferSuggestion(field)); return; }
+  if (!result?.ok) { showStatus(field, tr(result?.errorKey || "errorConnection"), () => buildOfferSuggestion(field), true); return; }
   const logins = result.locked ? [] : result.logins || [];
   if (!result.locked && !logins.length && !generator) return;
   const box = buildSuggestionBox(field);
@@ -424,12 +425,12 @@ async function buildOfferSuggestion(field) {
     showStatus(field, tr("requestingCode"));
     const reply = await send({ type: "beginUnlock" }).catch(() => null);
     if (reply?.popupOpened) removeSuggestion();
-    else showStatus(field, tr(reply?.challengeReady ? "codeReadyClickToolbar" : reply?.errorKey || "unlockFailed"));
+    else showStatus(field, tr(reply?.challengeReady ? "codeReadyClickToolbar" : reply?.errorKey || "unlockFailed"), null, !reply?.challengeReady);
   });
   for (const login of logins) appendAccountRow(box, login, () => fillLogin(field, login));
   if (generator) for (const option of [
-    { label: tr("strongPassword"), value: globalThis.FAPASSWORD_PASSWORDS.appleStyle() },
-    { label: tr("noSpecialCharacters"), value: globalThis.FAPASSWORD_PASSWORDS.alphanumeric() },
+    { label: tr("strongPassword"), value: globalThis.FAPASSWORD_PASSWORDS.custom() },
+    { label: tr("includeSpecialCharacters"), value: globalThis.FAPASSWORD_PASSWORDS.custom(16, true) },
   ]) {
     const row = appendRow(box, option.label, () => fillGeneratedPassword(field, option.value));
     row.setAttribute("data-op-generate", "1");
@@ -525,7 +526,7 @@ function maybeOfferSave(scope, intent) {
   if (!frameIsSafe() || !intent) return;
   const credential = collectSubmittedCredentials(scope);
   if (!credential) return;
-  if (credential.errorKey) { showStatus(lastFocused, tr(credential.errorKey)); return; }
+  if (credential.errorKey) { showStatus(lastFocused, tr(credential.errorKey), null, true); return; }
   // No awaited work precedes this handoff. Navigation cannot interrupt a digest/query here.
   send({ type: "resolveSave", ...credential, submissionId: intent.id }).catch(() => {});
 }

@@ -75,7 +75,45 @@ try {
   await test('new password generator leaves current-password empty',async()=>{
     await open('<form><input id="u" autocomplete="username"><input id="old" type="password" autocomplete="current-password"><input id="new" type="password" autocomplete="new-password"><input id="confirm" type="password" autocomplete="new-password"><button>Update</button></form>');
     await offer('#new');await page.locator('[data-op-generate]').first().click();
-    assert.equal(await page.inputValue('#old'),'');const generated=await page.inputValue('#new');assert.ok(generated.length>=20);assert.equal(await page.inputValue('#confirm'),generated);
+    assert.equal(await page.inputValue('#old'),'');const generated=await page.inputValue('#new');assert.match(generated,/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z0-9]{16}$/);assert.equal(await page.inputValue('#confirm'),generated);
+  });
+  await test('inline special-character option stays 16 characters and fills only new fields',async()=>{
+    await open('<form><input id="u" autocomplete="username"><input id="old" type="password" autocomplete="current-password"><input id="new" type="password" autocomplete="new-password"><input id="confirm" type="password" autocomplete="new-password"></form>');
+    await offer('#new');await page.locator('[data-op-generate]').nth(1).click();
+    const generated=await page.inputValue('#new');
+    assert.equal(generated.length,16);assert.match(generated,/[^A-Za-z0-9]/);
+    assert.equal(await page.inputValue('#confirm'),generated);assert.equal(await page.inputValue('#old'),'');
+  });
+  await test('inline normal and error notices match popup typography and colors in both themes',async()=>{
+    const metrics=locator=>locator.evaluate(el=>{
+      const css=getComputedStyle(el);
+      return Object.fromEntries(['fontFamily','fontSize','fontWeight','lineHeight','padding','margin','color'].map(key=>[key,css[key]]));
+    });
+    try {
+      for(const theme of ['light','dark']) {
+        await open();await page.emulateMedia({colorScheme:theme});await ui.emulateMedia({colorScheme:theme});
+        await worker.evaluate(()=>{testNative.entries=[];});
+        await ui.evaluate(()=>document.getElementById('refresh').click());
+        await wait(async()=>await ui.locator('#status-message').textContent()===await ui.evaluate(()=>chrome.i18n.getMessage('noLogins')));
+        const normal=await metrics(ui.locator('#status-message'));
+        await worker.evaluate(()=>{testNative.entries=null;testNative.delays.passwords=1500;});
+        await api({type:'refreshLogins'});await offer();await inline();
+        await page.locator('[role=status]').waitFor();
+        assert.deepEqual(await metrics(page.locator('[role=status]')),normal);
+        await worker.evaluate(()=>{testNative.delays.passwords=0;});
+        await wait(async()=>await page.locator('[role=status]').count()===0);
+        await open();await page.emulateMedia({colorScheme:theme});
+        await worker.evaluate(()=>{testNative.statuses.names=1;});
+        await ui.evaluate(()=>document.getElementById('refresh').click());await wait(async()=>await ui.locator('#refresh').isEnabled());
+        const error=await metrics(ui.locator('#status-message'));
+        assert.notEqual(error.color,normal.color);
+        await page.locator('#u').click();await page.locator('[role=status]').waitFor();
+        assert.deepEqual(await metrics(page.locator('[role=status]')),error);
+        await worker.evaluate(()=>{testNative.statuses.names=undefined;});
+      }
+    } finally {
+      await worker.evaluate(()=>{testNative.delays.passwords=0;testNative.statuses.names=undefined;testNative.entries=null;});
+    }
   });
   await test('signup controls in another form do not turn login into new-password',async()=>{
     await open(markup+'<form><input type="password"><button>Register</button></form>');
