@@ -14,8 +14,8 @@ jobs:
       matrix:
         node: [18, 22]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci
@@ -39,8 +39,8 @@ jobs:
         # 1.42.1 ships Chromium 123, the manifest's minimum supported browser.
         playwright: [1.42.1, 1.62.1]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: npm ci
@@ -55,15 +55,15 @@ jobs:
           export FAPASSWORD_BROWSER_EXECUTABLE="$(node -e 'process.stdout.write(require(process.env.RUNNER_TEMP + "/fapassword-tools/node_modules/playwright").chromium.executablePath())')"
           export FAPASSWORD_BUILD_SOURCE="$PWD/dist/fapassword-$(node -p 'require("./manifest.json").version')"
           npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: browser-evidence-${{ matrix.playwright }}
           path: test-harness/automation/shots
 
   native:
-    runs-on: macos-14
+    runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Native policy behavior and real CoreFoundation read
         run: python3 test-harness/automation/native-policy.test.py
