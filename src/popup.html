@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title data-i18n="extensionName">FAPassword</title>
+  </head>
+  <body>
+    <header>
+      <img src="../icons/icon48.png" alt="" width="20" height="20" />
+      <h1>FAPassword</h1>
+      <button id="refresh" class="icon" data-i18n-title="refreshPasswords" data-i18n-aria-label="refreshPasswords" title="Refresh passwords" aria-label="Refresh passwords" hidden><span class="refresh-glyph" aria-hidden="true">&#x21bb;</span></button>
+      <span id="dot" class="dot" role="status" aria-live="polite" data-i18n-title="status" title="status"></span>
+    </header>
+
+    <main>
+      <!-- No native helper -->
+      <section id="view-nohelper" hidden>
+        <button class="retry-connection" data-i18n="retry">Retry</button>
+      </section>
+
+      <!-- Needs PIN -->
+      <section id="view-pin" hidden>
+        <div class="pin-row">
+          <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" data-i18n-aria-label="verificationCode" aria-label="Verification code" aria-describedby="status-message" />
+          <button id="verify" class="primary" data-i18n="unlock">Unlock</button>
+        </div>
+        <button id="newcode" class="link" data-i18n="requestNewCode">Request a new code</button>
+      </section>
+
+      <!-- Connecting -->
+      <section id="view-connecting" hidden>
+        <button class="retry-connection" data-i18n="retry">Retry</button>
+      </section>
+
+      <!-- Unlocked: logins for current site -->
+      <section id="view-unlocked" hidden>
+        <p id="site" class="site" hidden></p>
+        <ul id="logins" class="logins"></ul>
+        <button id="refill" class="link" hidden></button>
+      </section>
+      <p id="status-message" class="status-message" role="status" aria-live="polite" aria-atomic="true" data-i18n="connecting"></p>
+      <section id="pending-saves" hidden>
+        <h2 data-i18n="pendingSaves">Password save requests</h2>
+        <ul id="save-list" aria-live="polite"></ul>
+      </section>
+    </main>
+
+    <!-- Footer: local password actions and toggles for browser features -->
+    <footer>
+      <div class="quick-actions" data-i18n-aria-label="passwordActions" aria-label="Password actions">
+        <button id="open-passwords" class="action-button" data-i18n="openPasswords" data-i18n-title="openPasswords" title="Open Apple Passwords">Open Apple Passwords</button>
+        <button id="generate-password" class="action-button" data-i18n="generatePassword" data-i18n-title="generatePassword" title="Generate a strong password">Generate password</button>
+      </div>
+      <div id="generated-password-panel" class="generated-password-panel" hidden>
+        <div class="generator-options">
+          <label class="generator-option"><input id="include-special" type="checkbox" /> <span data-i18n="includeSpecialCharacters">Include special characters</span></label>
+          <label class="generator-option length-option"><span data-i18n="passwordLength">Length</span><input id="password-length" type="number" min="8" max="64" value="16" inputmode="numeric" /></label>
+        </div>
+        <div class="generated-password-row">
+          <input id="generated-password" type="text" readonly spellcheck="false" autocomplete="off" data-i18n-aria-label="generatedPassword" aria-label="Generated password" />
+          <button id="copy-generated-password" class="copy-button" data-i18n="copyPassword">Copy</button>
+        </div>
+      </div>
+      <details class="settings-panel">
+        <summary>
+          <span class="section-title" data-i18n="browserControls">Browser controls</span>
+        </summary>
+        <div class="settings-list">
+          <label id="pm-row" class="switch-row" hidden>
+            <span class="setting-copy"><span data-i18n="hideSaveBubble">Hide password save prompts</span><span id="pm-note" class="subnote" role="status" aria-live="polite"></span></span>
+            <span class="segmented-switch">
+              <input type="checkbox" id="pm-toggle" class="switch" role="switch" />
+              <span class="switch-options" aria-hidden="true"><span data-i18n="on">On</span><span data-i18n="off">Off</span></span>
+            </span>
+          </label>
+          <label id="policy-row" class="switch-row">
+            <span class="setting-copy"><span data-i18n="hidePasswordManager">Turn off browser password saving</span><span id="policy-scope" class="scope-note"></span><span id="policy-note" class="subnote" role="status" aria-live="polite"></span></span>
+            <span class="segmented-switch">
+              <input type="checkbox" id="policy-toggle" class="switch" role="switch" disabled />
+              <span class="switch-options" aria-hidden="true"><span data-i18n="on">On</span><span data-i18n="off">Off</span></span>
+            </span>
+          </label>
+          <label id="af-row" class="switch-row" hidden>
+            <span class="setting-copy"><span data-i18n="hideAddressAutofill">Disable address autofill</span><span id="af-note" class="subnote" role="status" aria-live="polite"></span></span>
+            <span class="segmented-switch">
+              <input type="checkbox" id="af-toggle" class="switch" role="switch" />
+              <span class="switch-options" aria-hidden="true"><span data-i18n="on">On</span><span data-i18n="off">Off</span></span>
+            </span>
+          </label>
+        </div>
+      </details>
+    </footer>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

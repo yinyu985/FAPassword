@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAPassword · Apple 密码保存验收</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 760px; margin: 40px auto; padding: 0 20px 64px; line-height: 1.55; }
+  h1 { margin-bottom: 8px; }
+  h2 { font-size: 18px; }
+  code { overflow-wrap: anywhere; }
+  .notice, .panel, .memory, .log { border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); padding: 16px; }
+  .notice { margin: 18px 0; }
+  .notice.warning { border-color: #c88719; }
+  .modes { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+  button, input { box-sizing: border-box; min-height: 38px; padding: 7px 10px; font: inherit; }
+  button { cursor: pointer; }
+  .modes button[aria-selected="true"] { border-color: #2875d0; box-shadow: inset 0 -2px #2875d0; }
+  label { display: block; margin: 12px 0; }
+  label span { display: block; margin-bottom: 4px; }
+  input { width: 100%; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .receipt { padding: 12px; border-left: 3px solid #39834f; }
+  .memory { margin-top: 20px; }
+  .memory ul, .log ol { margin-bottom: 0; }
+  .muted { color: color-mix(in srgb, CanvasText 65%, transparent); }
+  [hidden] { display: none !important; }
+</style>
+
+<h1>真实 Apple 密码保存验收</h1>
+<p>这个页面只负责制造明确的保存场景。密码留在当前页面内存和输入框中，不写日志，也不发送给服务器。</p>
+
+<div id="origin-notice" class="notice" role="status">
+  当前测试地址：<code id="origin"></code>
+  <div id="origin-assessment"></div>
+</div>
+
+<div class="actions">
+  <button id="prepare" type="button">准备一组随机测试数据</button>
+  <button id="clear-all" type="button">清空页面内存</button>
+</div>
+
+<nav class="modes" aria-label="保存场景">
+  <button type="button" data-mode="new" aria-selected="true">1. 新账号</button>
+  <button type="button" data-mode="login" aria-selected="false">2. 普通登录</button>
+  <button type="button" data-mode="change" aria-selected="false">3. 修改密码</button>
+  <button type="button" data-mode="verify" aria-selected="false">4. 回填核对</button>
+</nav>
+
+<main>
+  <section class="panel" data-panel="new">
+    <h2>新建账号</h2>
+    <p class="muted">对应 Apple 官方扩展的 <code>CmdNewAccount4URL</code>。提交后应出现“存储密码”确认。</p>
+    <form data-kind="new" action="/fapassword-test/account-created" method="post">
+      <label><span>用户名</span><input name="username" autocomplete="username" required></label>
+      <label><span>新密码</span><input name="new-password" type="password" autocomplete="new-password" required></label>
+      <label><span>确认新密码</span><input name="confirm-password" type="password" autocomplete="new-password" required></label>
+      <button type="submit">创建账号</button>
+    </form>
+    <div class="receipt" hidden><strong>页面已接受新账号提交。</strong> 输入框保留可见，以显示 FAPassword 的异步状态；现在还需检查 Apple 确认，并在确认后到 Passwords 中独立查找。</div>
+  </section>
+
+  <section class="panel" data-panel="login" hidden>
+    <h2>普通登录</h2>
+    <p class="muted">对应 <code>CmdSetPassword4LoginName_URL</code>。适合验证新登录或已有账号输入了不同密码的情况。</p>
+    <form data-kind="login" action="/fapassword-test/signed-in" method="post">
+      <label><span>用户名</span><input name="username" autocomplete="username" required></label>
+      <label><span>密码</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">登录</button>
+    </form>
+    <div class="receipt" hidden><strong>页面已接受登录提交。</strong> 输入框保留可见，以显示 FAPassword 的异步状态；这还不证明 Apple 已落库。</div>
+  </section>
+
+  <section class="panel" data-panel="change" hidden>
+    <h2>修改密码</h2>
+    <p class="muted">对应 <code>CmdChangePasswordForLoginName_URL</code>。确认后应更新同一账号，而不是新建重复条目。</p>
+    <form data-kind="change" action="/fapassword-test/password-changed" method="post">
+      <label><span>用户名</span><input name="username" autocomplete="username" required></label>
+      <label><span>当前密码</span><input name="current-password" type="password" autocomplete="current-password" required></label>
+      <label><span>新密码</span><input name="new-password" type="password" autocomplete="new-password" required></label>
+      <label><span>确认新密码</span><input name="confirm-password" type="password" autocomplete="new-password" required></label>
+      <button type="submit">更新密码</button>
+    </form>
+    <div class="receipt" hidden><strong>页面已接受改密提交。</strong> 输入框保留可见，以显示 FAPassword 的异步状态；确认后在 Passwords 中核对同一账号的当前值。</div>
+  </section>
+
+  <section class="panel" data-panel="verify" hidden>
+    <h2>清空后回填核对</h2>
+    <p class="muted">先聚焦输入框，用 FAPassword 刷新并填充刚才的测试账号，再点“比较内存结果”。</p>
+    <form data-kind="verify" onsubmit="return false">
+      <label><span>用户名</span><input name="username" autocomplete="username"></label>
+      <label><span>密码</span><input name="password" type="password" autocomplete="current-password"></label>
+      <div class="actions">
+        <button id="clear-verify" type="button">清空，等待扩展填充</button>
+        <button id="check" type="button">比较内存结果</button>
+      </div>
+    </form>
+    <p id="check-result" role="status"></p>
+  </section>
+</main>
+
+<section class="memory" aria-live="polite">
+  <strong>内存基准</strong>
+  <ul>
+    <li>测试用户名：<code id="memory-user">尚未准备</code></li>
+    <li>第一版密码：<span id="memory-v1">尚未记录</span></li>
+    <li>第二版密码：<span id="memory-v2">尚未记录</span></li>
+  </ul>
+  <p class="muted">页面不会显示或记录密码正文，只保留用于本页比较的内存值。刷新或关闭页面后全部丢失。</p>
+</section>
+
+<section class="log">
+  <strong>非敏感事件</strong>
+  <ol id="events"><li>等待操作。</li></ol>
+</section>
+
+<script src="live-save.js"></script>
+</html>

@@ -1,0 +1,12 @@
+node_modules/
+*.zip
+.DS_Store
+*.pem
+*.crx
+
+# python bytecode
+__pycache__/
+*.pyc
+# dist is a build artifact, rebuilt via 'npm run build'
+
+dist/
