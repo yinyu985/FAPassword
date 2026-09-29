@@ -81,7 +81,11 @@ try {
     await open(markup+'<button id="under" type="button">Forgot password</button>');await offer();
     const row=page.getByRole('option',{name:'test@example.com',exact:true});const rect=await row.boundingBox();assert.ok(rect);
     await page.evaluate(rect=>{
-      window.underClicks=0;const control=document.getElementById('under');control.addEventListener('click',()=>window.underClicks++);
+      window.underClicks=0;
+      // The fixture stacks its fields, so the dropdown row overlaps #p. Keep the
+      // fill target clear while the page control deliberately sits under the row.
+      Object.assign(document.getElementById('p').style,{position:'fixed',left:'12px',top:(innerHeight-90)+'px',width:'220px',height:'34px',margin:'0'});
+      const control=document.getElementById('under');control.addEventListener('click',()=>window.underClicks++);
       Object.assign(control.style,{position:'fixed',left:rect.x+'px',top:rect.y+'px',width:rect.width+'px',height:rect.height+'px',margin:'0'});
     },rect);
     await page.mouse.click(rect.x+rect.width/2,rect.y+rect.height/2);
