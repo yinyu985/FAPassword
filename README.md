@@ -18,20 +18,22 @@ Apple's official iCloud Passwords extension for Chrome sits at 2.3 out of 5 acro
 
 It speaks the same native-messaging protocol Apple's extension uses (`com.apple.passwordmanager`): an SRP-6a handshake where the 6-digit code your Mac shows you is the shared secret, then an AES-GCM encrypted channel for the password queries. Same vault, same OS authorization, with saner client behavior.
 
-It connects to the live vault, prompts for the PIN once, lists the logins for the current site, and fills them.
+It connects to the live vault, lists the logins for the current site, and fills them. During one running browser session, it normally asks for the Apple verification code once. A full browser quit/restart or native-helper disconnect requires a fresh code because the session key intentionally exists only in memory.
 
-## Paste-friendly PIN entry
+## Paste-friendly Apple verification code
 
 The 6-digit code box accepts a **direct paste**. When your Mac shows the code, grab it with a screen OCR and paste whatever comes out — spaces, dashes, line breaks, full-width digits and stray glyphs are all filtered down to the six digits, and verification starts the moment all six are in. No hunting for keys, no hand-untangling a mangled OCR string.
 
 As long as the OCR got six digits right, pasting `123 456`, `1234 56` or `123.456` all verify as `123456` — you never have to type the code by hand.
 
+This Apple verification code authenticates the extension to the native helper. It is not a website OTP/TOTP feature: FAPassword does not read, generate, or fill website one-time codes. It only recognizes known OTP fields so password suggestions stay away from them.
+
 ## What it fixes
 
 | The complaint about Apple's extension | What this does |
 |---|---|
-| re-prompts for the 6-digit code every restart, sometimes every few hours | the live native-messaging port keeps the MV3 worker and session alive; a real disconnect is detected and recovered cleanly ([protocol.js](src/protocol.js)) |
-| "Enable AutoFill" balloon on every field, including OTP boxes | explicit OTP semantics take precedence over password type; known OTP/search/contact fixtures are excluded, while unlabelled custom widgets remain heuristic ([field-policy.js](src/field-policy.js)) |
+| re-prompts for the 6-digit code after every restart and sometimes repeatedly during one browser session | the live native-messaging port keeps the worker and session alive for the current browser process, avoiding needless re-pairing during that session; a full quit/restart or real disconnect still requires a fresh code ([protocol.js](src/protocol.js)) |
+| "Enable AutoFill" balloon on every field, including OTP boxes | FAPassword does not provide OTP/TOTP filling; it recognizes known OTP fields and excludes them from login suggestions. Known search/contact fixtures are likewise excluded, while unlabelled custom widgets remain heuristic ([field-policy.js](src/field-policy.js)) |
 | 100% CPU / typing lag | focus triggers classification; typing only dismisses stale offers/cancels pending fills, without a document scan or native query |
 | re-downloads every image on hover to scan for QR codes | there's no image or QR scanning here at all |
 | fills the wrong field or wrong origin | fills bind the exact origin, frame, document, request and field references; eligibility is rechecked before each write |
@@ -118,6 +120,7 @@ PasswordManagerBrowserExtensionHelper (macOS native, talks to iCloud Keychain)
 
 ## What it doesn't fix
 
+- a full browser quit/restart requires a fresh Apple verification code. The session key is deliberately memory-only and cannot survive the browser process.
 - the macOS authorization prompt. when the helper reads a password, macOS itself asks for Touch ID or your login password. that's the per-credential `RequiresUserAuthenticationToFill` flag set by the vault. Chrome's built-in manager skips it only because it keeps passwords in its own database instead of the iCloud vault, and removing it would mean giving up live vault access.
 - no Linux. same as Apple, the native helper only exists on macOS and Windows.
 - no passkey or TOTP management. out of scope, this reads passwords and login names.
@@ -157,7 +160,7 @@ two extensions collide at the integration boundary and can race for prompts and 
 
 ## Saving and refresh behavior
 
-Refresh updates the account list and invalidates both credential caches. It does not read or fill a password. **Fill again** is a separate explicit action that retains the original login frame.
+Refresh updates the account list and invalidates both credential caches. It does not read or fill a password. **Fill again** is a separate explicit action that retains the original login frame. Generated passwords target only recognized new-password and confirmation fields.
 
 User submissions are handed to the background immediately. Existing usernames are also offered to Apple's `maybeAdd` flow so that changed passwords can be considered for update. Deferred requests expire after three minutes before handoff. The popup shows waiting, failed, uncertain, expired and sent states with retry/cancel controls. Like Apple's client, saving sends a one-way command; it does not wait for a save reply or block subsequent queries. A successful send proves neither approval nor persistence in the vault. Check Apple Passwords before retrying an uncertain request. Cancelling a local request cannot undo a native operation already received by macOS.
 
