@@ -27,6 +27,8 @@
 
   function isOtpField(element) {
     if (otpAutocomplete.test(element.getAttribute("autocomplete") || "")) return true;
+    // A site's choice of name (e.g. passcode) must not override an explicit role.
+    if (/\b(?:current|new)-password\b/i.test(element.getAttribute("autocomplete") || "")) return false;
     const max = Number.parseInt(element.getAttribute("maxlength") || "0", 10);
     if (element.inputMode === "numeric" && max === 1) return true;
     return otpHint.test(attrBlob(element));
@@ -40,6 +42,7 @@
     if (!["text", ""].includes((element.type || "text").toLowerCase())) return false;
     if (everPassword.has(element)) return true;
     if ((element.getAttribute("autocomplete") || "").toLowerCase().includes("password")) return true;
+    if (/hint|reminder|strength|search|提示|提醒|强度|強度/i.test(attrBlob(element))) return false;
     return /passw|pwd|密码|密碼|パスワード/i.test(attrBlob(element));
   }
 
@@ -104,9 +107,14 @@
     return true;
   }
 
-  function isEditable(element) {
-    return element instanceof HTMLInputElement && !element.disabled && !element.readOnly &&
+  // Reading a submitted readonly value is safe; filling it is a different policy.
+  function isReadable(element) {
+    return element instanceof HTMLInputElement && !element.disabled &&
       !element.matches?.(":disabled") && !isOtpField(element) && isVisible(element);
+  }
+
+  function isEditable(element) {
+    return isReadable(element) && !element.readOnly;
   }
 
   function isFillable(element) {
@@ -118,7 +126,7 @@
     const autocomplete = (element.getAttribute("autocomplete") || "").toLowerCase();
     if (autocomplete.includes("username") || autocomplete.includes("email") || autocomplete.includes("webauthn")) return true;
     if (type === "email") return true;
-    return /\b(e[\s-]?mail|sign[\s-]?in[\s-]?id|log[\s-]?in[\s-]?id|user[\s-]?id|username|passkey)\b|用户名|使用者名稱|邮箱|郵箱|电子邮件|電子郵件|手机号|手機號|アカウント/i.test(attrBlob(element));
+    return /\b(e[\s-]?mail|sign[\s-]?in[\s-]?id|log[\s-]?in[\s-]?id|user[\s-]?id|username|passkey|account|phone|mobile)\b|用户名|使用者名稱|账号|帐号|帳號|邮箱|郵箱|电子邮件|電子郵件|手机号|手機號|アカウント/i.test(attrBlob(element));
   }
 
   function formLooksLikeAddress(element, context) {
@@ -221,13 +229,13 @@
     if (current(element)) return false;
     if (/new-password/i.test(ac)) return true;
     const scope = scopeFor(element);
-    const passwords = classify(scope).passwords.filter(isEditable);
+    const passwords = classify(scope).passwords.filter(isReadable);
     if (passwords.some(current)) {
       return /new|confirm|repeat|新密码|新密碼|确认|確認/i.test(attrBlob(element));
     }
     if (passwords.length === 2 && passwords.some((p) => /new-password/i.test(p.autocomplete || "") ||
       /confirm|repeat|确认|確認/i.test(attrBlob(p)))) return true;
-    return Array.from(scope.querySelectorAll('button, input[type="submit"]')).some((b) =>
+    return Array.from(scope.querySelectorAll('button, input[type="submit"], [role="button"]')).some((b) =>
       /sign[\s-]?up|register|create[\s-]?account|注册|註冊|创建账号|建立帳戶/i.test(b.textContent || b.value || ""));
   }
 
@@ -236,6 +244,7 @@
     everPassword,
     isFillable,
     isEditable,
+    isReadable,
     isExposed,
     isLoginField,
     isOtpField,

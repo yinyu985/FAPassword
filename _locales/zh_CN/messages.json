@@ -13,6 +13,7 @@
   "toolbarNoHelper": { "message": "FAPassword — Apple 密码助手不可用，打开扩展查看详情。" },
   "toolbarLocked": { "message": "FAPassword — 尚未解锁，打开扩展完成验证。" },
   "toolbarUnlocked": { "message": "FAPassword — 已连接并解锁。" },
+  "toolbarSaveAttention": { "message": "FAPassword — 密码保存需要处理，请打开扩展解锁或查看原因。" },
   "passwordActions": {
     "message": "密码操作"
   },
@@ -315,8 +316,17 @@
     "message": "凭据未变化，无需重复发起保存请求。"
   },
   "saveNoAccount": {
-    "message": "无法识别这次登录对应的账号。"
+    "message": "账号不明确。请在下方填写账号后确认保存；候选将在 3 分钟后过期。"
   },
+  "saveReview": { "message": "生成密码已暂存 3 分钟。提交表单后自动处理，也可在这里确认保存。" },
+  "saveConfirm": { "message": "确认保存" },
+  "saveAccountPlaceholder": { "message": "账号 / 邮箱 / 手机号" },
+  "saveStorageFailed": { "message": "保存请求无法跨后台重启保留。请保持页面打开并重试。" },
+  "saveRecoveredReview": { "message": "后台重启后恢复的请求。请核对账号并再次确认保存。" },
+  "saveCancelling": { "message": "正在记录取消操作；取消处理期间不会发送该请求。" },
+  "saveCancelFailed": { "message": "取消操作暂时无法保留。请求已暂停，请在过期前重试取消。" },
+  "saveRecoveryFailed": { "message": "待保存请求暂时无法读取。请重试；空列表不代表没有待保存请求。" },
+  "saveQueueFull": { "message": "待处理的保存请求过多。请先确认或取消已有请求，再重试。" },
   "refillComplete": {
     "message": "已重新填充该账号。"
   },

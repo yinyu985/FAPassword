@@ -295,7 +295,7 @@ function render(state) {
   if (state === "needs_pin") {
     show("pin");
     setPinStatus(t(pinOperation === "request" ? "requestingCode" : pinOperation === "verify" ? "verifying" : "pinMessage"));
-    if (!pinOperation) pinInput.focus();
+    if (!pinOperation && !document.activeElement?.matches("#save-list input")) pinInput.focus();
     return;
   }
   if (state === "unlocked") { show("unlocked"); renderLogins(seq); return; }
@@ -429,37 +429,114 @@ refillBtn.addEventListener("click", async () => {
   } finally { if (operation === fillOperation) { fillOperation = null; updateControls(); } }
 });
 
-let savesSignature = "";
-function renderSaves(saves = []) {
-  const signature = JSON.stringify([lastState, saves]);
-  if (signature === savesSignature) return;
-  savesSignature = signature;
+const saveRows = new Map();
+let saveSnapshotVersion = 0;
+let saveRecoveryError = null;
+let recoveryNotice;
+let recoveryRetry;
+function updateSaveRow(row) {
+  const save = row.save;
+  row.text.classList.toggle("failed", ["failed", "blocked", "notice", "uncertain", "expired", "cancelPending"].includes(save.status) || save.messageKey === "saveNoAccount");
+  row.text.textContent = `${save.host} · ${save.username || t("noUsername")} — ${t(save.messageKey || "saveQueued")}`;
+  if (save.status === "needsAccount" && !row.accountInput) {
+    const input = row.accountInput = document.createElement("input");
+    input.type = "text"; input.autocomplete = "off"; input.value = row.accountDraft;
+    input.placeholder = t("saveAccountPlaceholder"); input.setAttribute("aria-label", t("saveAccountPlaceholder"));
+    input.addEventListener("input", () => { row.accountDraft = input.value; });
+    row.item.insertBefore(input, row.retry.parentNode === row.item ? row.retry : row.cancel);
+  } else if (save.status !== "needsAccount" && row.accountInput) {
+    row.accountDraft = row.accountInput.value;
+    row.accountInput.remove(); row.accountInput = null;
+  }
+  const canRetry = ["queued", "review", "needsAccount", "failed", "uncertain"].includes(save.status);
+  if (canRetry && row.retry.parentNode !== row.item) row.item.insertBefore(row.retry, row.cancel);
+  else if (!canRetry) row.retry.remove();
+  row.retry.textContent = t(["review", "needsAccount"].includes(save.status) ? "saveConfirm" : lastState === "unlocked" ? "retry" : "unlock");
+  row.cancel.textContent = t(["submitted", "skipped", "expired", "cancelled", "notice"].includes(save.status) ? "dismiss" : "cancelSave");
+  row.retry.disabled = !!row.operation || !!saveRecoveryError;
+  row.cancel.disabled = !!row.operation;
+  row.item.setAttribute("aria-busy", String(!!row.operation));
+}
+function saveRow(save) {
+  const row = { save, item: document.createElement("li"), text: document.createElement("p"),
+    retry: document.createElement("button"), cancel: document.createElement("button"),
+    accountInput: null, accountDraft: "", operation: null, errorText: "" };
+  row.item.dataset.saveId = save.id;
+  row.text.className = "notice";
+  row.retry.addEventListener("click", async () => {
+    if (row.operation) return;
+    const username = row.accountInput?.value;
+    if (row.accountInput && !username.trim()) { row.accountInput.focus(); return; }
+    row.operation = "retry"; updateSaveRow(row);
+    try {
+      if (lastState !== "unlocked") await connectAndRender();
+      const version = saveSnapshotVersion;
+      const result = await send({ type: "retrySave", saveId: row.save.id, username });
+      if (saveRows.get(row.save.id) !== row) return;
+      if (version === saveSnapshotVersion) renderSaves(result.saves, result.saveRecoveryError, !result.ok);
+      if (!result.ok && !["submitted", "skipped", "expired"].includes(row.save.status)) {
+        row.errorText = responseText(result, "saveFailed"); setStatus(row.errorText, true);
+      }
+    } finally { row.operation = null; updateSaveRow(row); }
+  });
+  row.cancel.addEventListener("click", async () => {
+    if (row.operation) return;
+    row.operation = "cancel"; updateSaveRow(row);
+    try {
+      const version = saveSnapshotVersion;
+      const result = await send({ type: "cancelSave", saveId: row.save.id });
+      // A newer broadcast may already have completed cancellation. A delayed
+      // failure snapshot must not recreate the removed row or undo its state.
+      if (saveRows.get(row.save.id) !== row) return;
+      if (version === saveSnapshotVersion) renderSaves(result.saves, result.saveRecoveryError, !result.ok);
+      if (!result.ok) { row.errorText = responseText(result, "saveFailed"); setStatus(row.errorText, true); }
+      else if (row.errorText && statusMessage.textContent === row.errorText) setStatus();
+    } finally { row.operation = null; updateSaveRow(row); }
+  });
+  row.item.append(row.text, row.cancel);
+  return row;
+}
+function renderSaves(saves, recoveryError, preserveMissing = false) {
+  if (Array.isArray(saves) || recoveryError !== undefined) saveSnapshotVersion++;
   const section = document.getElementById("pending-saves");
   const list = document.getElementById("save-list");
-  list.replaceChildren(); section.hidden = !saves.length;
-  for (const save of saves) {
-    const item = document.createElement("li");
-    const text = document.createElement("p");
-    text.className = "notice";
-    text.classList.toggle("failed", ["failed", "uncertain", "expired"].includes(save.status) || save.messageKey === "saveNoAccount");
-    text.textContent = `${save.host} · ${save.username || t("noUsername")} — ${t(save.messageKey || "saveQueued")}`;
-    item.appendChild(text);
-    if (["queued", "failed", "uncertain"].includes(save.status)) {
-      const retry = document.createElement("button");
-      retry.textContent = t(lastState === "unlocked" ? "retry" : "unlock");
-      retry.addEventListener("click", async () => {
-        retry.disabled = true;
-        if (lastState !== "unlocked") await connectAndRender();
-        const result = await send({ type: "retrySave", saveId: save.id });
-        if (result.saves) renderSaves(result.saves);
-      });
-      item.appendChild(retry);
-    }
-    const cancel = document.createElement("button");
-    cancel.textContent = t(["submitted", "skipped", "expired", "cancelled"].includes(save.status) ? "dismiss" : "cancelSave");
-    cancel.addEventListener("click", async () => { const result = await send({ type: "cancelSave", saveId: save.id }); renderSaves(result.saves); });
-    item.appendChild(cancel); list.appendChild(item);
+  if (recoveryError !== undefined) saveRecoveryError = recoveryError;
+  if (!recoveryNotice) {
+    recoveryNotice = document.createElement("p"); recoveryNotice.id = "save-recovery-error";
+    recoveryNotice.className = "notice failed"; recoveryNotice.setAttribute("role", "status");
+    recoveryRetry = document.createElement("button"); recoveryRetry.textContent = t("retry");
+    recoveryRetry.addEventListener("click", async () => {
+      recoveryRetry.disabled = true;
+      try { await connectAndRender(); } finally { recoveryRetry.disabled = false; }
+    });
+    section.insertBefore(recoveryNotice, list); section.insertBefore(recoveryRetry, list);
   }
+  recoveryNotice.hidden = recoveryRetry.hidden = !saveRecoveryError;
+  recoveryNotice.textContent = saveRecoveryError ? t("saveRecoveryFailed") : "";
+  // An error response without a snapshot is not evidence that the queue is empty.
+  if (Array.isArray(saves) && !saveRecoveryError) {
+    if (preserveMissing) {
+      const merged = new Map([...saveRows.values()].map(row => [row.save.id, row.save]));
+      for (const save of saves) merged.set(save.id, save);
+      saves = [...merged.values()];
+    }
+    const ids = new Set(saves.map(save => save.id));
+    for (const [id, row] of saveRows) {
+      if (!ids.has(id)) { row.item.remove(); saveRows.delete(id); }
+    }
+    const focused = document.activeElement;
+    const selection = focused?.matches("#save-list input") ? [focused.selectionStart, focused.selectionEnd] : null;
+    for (const [index, save] of saves.entries()) {
+      let row = saveRows.get(save.id);
+      if (!row) { row = saveRow(save); saveRows.set(save.id, row); }
+      row.save = save; updateSaveRow(row);
+      if (list.children[index] !== row.item) list.insertBefore(row.item, list.children[index] || null);
+    }
+    if (selection && focused.isConnected && document.activeElement !== focused) {
+      focused.focus({ preventScroll: true }); focused.setSelectionRange(...selection);
+    }
+  } else for (const row of saveRows.values()) updateSaveRow(row);
+  section.hidden = !saveRows.size && !saveRecoveryError;
 }
 let connecting = false;
 async function connectAndRender() {
@@ -468,7 +545,7 @@ async function connectAndRender() {
   for (const button of document.querySelectorAll(".retry-connection")) button.disabled = true;
   try {
     const response = await send({ type: "retryConnection" });
-    render(response.state || "disconnected"); renderSaves(response.saves);
+    render(response.state || "disconnected"); renderSaves(response.saves, response.saveRecoveryError);
     if (response.state === "needs_pin") await requestNewCode(true);
     else if (response.errorKey) setStatus(responseText(response), true);
   } finally {
@@ -483,7 +560,7 @@ function attachStatePort() {
   statePort = chrome.runtime.connect({ name: "fapassword-popup" });
   statePort.onMessage.addListener((message) => {
     if (message?.type !== "state") return;
-    render(message.state); renderSaves(message.saves);
+    render(message.state); renderSaves(message.saves, message.saveRecoveryError);
   });
   statePort.onDisconnect.addListener(() => {
     void chrome.runtime.lastError;

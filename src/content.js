@@ -1,7 +1,7 @@
 // Credential access is tied to a document, a user action and immutable field references.
 const tr = (name, substitutions) => chrome.i18n?.getMessage(name, substitutions) || name;
 const F = globalThis.FAPASSWORD_FIELDS;
-const { isFillable, isEditable, isExposed, isVisible, isLoginField, isPasswordish, isUsernameField,
+const { isFillable, isReadable, isExposed, isVisible, isLoginField, isPasswordish, isUsernameField,
   isNewPasswordField, scopeFor, classify, everPassword, attrBlob } = F;
 // Content scripts also start on HTTP pages, where randomUUID may be absent.
 // These opaque 128-bit IDs still use cryptographic randomness in every context.
@@ -15,12 +15,44 @@ let preparedFill = null;
 let recentAutofill = null;
 const autofilledFields = new WeakSet();
 const observedSubmissionRoots = new WeakSet();
+const generatedNewFields = new WeakSet();
+const generatedDrafts = new WeakMap();
+const draftUpdateTimers = new WeakMap();
+const saveSnapshots = new WeakMap();
+let usernameContext = null;
+const fieldShape = (input) => [input.tagName, input.type, input.id, input.name, input.autocomplete].join("\u0000");
+function scopeDescriptor(scope) {
+  return { scope, parent: scope.parentNode, previous: scope.previousSibling, next: scope.nextSibling,
+    root: scope.getRootNode(), tagName: scope.tagName, inputs: classify(scope).inputs.map((input) => ({ input, shape: fieldShape(input) })) };
+}
+function replacementAtSlot(descriptor) {
+  const { parent, previous, next, root } = descriptor;
+  if (!parent?.isConnected || parent.getRootNode() !== root ||
+      (previous && previous.parentNode !== parent) || (next && next.parentNode !== parent)) return null;
+  const candidate = next ? next.previousSibling : parent.lastChild;
+  return candidate instanceof Element && candidate.previousSibling === previous ? candidate : null;
+}
+function recoverSameScope(descriptor) {
+  const scope = descriptor.scope.isConnected ? descriptor.scope : replacementAtSlot(descriptor);
+  if (!scope || scope.tagName !== descriptor.tagName || scope.getRootNode() !== descriptor.root) return null;
+  const inputs = classify(scope).inputs;
+  if (inputs.length !== descriptor.inputs.length || inputs.some((input, index) => fieldShape(input) !== descriptor.inputs[index].shape)) return null;
+  descriptor.inputs.forEach(({ input }, index) => {
+    if (generatedNewFields.has(input) && isReadable(inputs[index])) generatedNewFields.add(inputs[index]);
+  });
+  return scope;
+}
+function rememberUsernameContext(username, scope, allowNext = false) {
+  usernameContext = { username, scope, at: Date.now(), allowNext, descriptor: scopeDescriptor(scope) };
+}
 function observeSubmissionRoot(element) {
   const root = element?.getRootNode?.();
   if (root instanceof ShadowRoot && !observedSubmissionRoots.has(root)) {
     observedSubmissionRoots.add(root);
     // Native submit events do not cross a shadow boundary.
     root.addEventListener("submit", onSubmit, true);
+    root.addEventListener("reset", onReset, true);
+    root.addEventListener("formdata", onFormData, true);
   }
 }
 const send = (message) => chrome.runtime.sendMessage({ ...message, documentKey });
@@ -109,6 +141,7 @@ function fillCredentials(message) {
   const filled = request.stage === "username" ? fields.username :
     fields.password && (!request.username || fields.username);
   recentAutofill = { username: message.username, at: Date.now() };
+  if (fields.username) rememberUsernameContext(message.username, request.scope, request.stage === "username");
   preparedFill = null;
   return { ok: filled, filled, fields, stage: request.stage, errorKey: filled ? undefined : "errorPartialFill" };
 }
@@ -117,7 +150,17 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id) return false;
   if (message?.type === "fill") { respond(fillCredentials(message)); return false; }
   if (message?.type === "saveStatus") {
-    if (message.documentKey === documentKey && lastFocused?.isConnected) showStatus(lastFocused, tr(message.messageKey), null, ["saveFailed", "saveUncertain", "saveExpired", "saveNoAccount"].includes(message.messageKey));
+    // A recovery draft belongs in the toolbar, not in a popover covering the
+    // site's Register button immediately after generating a password.
+    if (message.messageKey === "saveReview") { respond({ ok: true }); return false; }
+    if (message.documentKey === documentKey && lastFocused?.isConnected) {
+      const unlock = ["saveWaitingUnlock", "saveNoAccount", "saveReview", "saveFailed", "saveUncertain"].includes(message.messageKey) ? () => requestUnlock(lastFocused) : null;
+      showStatus(lastFocused, tr(message.messageKey), unlock,
+        ["saveFailed", "saveUncertain", "saveExpired", "saveNoAccount"].includes(message.messageKey), tr("openToUnlock"));
+    }
+    else if (message.documentKey === documentKey && ["saveFailed", "saveUncertain", "saveExpired", "saveNoAccount"].includes(message.messageKey)) {
+      notifySaveFailure(message.messageKey);
+    }
     respond({ ok: true }); return false;
   }
   if (!["describeFrame", "prepareFill"].includes(message?.type)) return false;
@@ -384,7 +427,7 @@ function appendAccountRow(box, login, action) {
   return row;
 }
 
-function showStatus(field, text, retry, failed = false) {
+function showStatus(field, text, retry, failed = false, actionLabel = tr("retry")) {
   if (!field?.isConnected || !isVisible(field) || !documentActive) return;
   const box = buildSuggestionBox(field);
   if (!box) return;
@@ -393,7 +436,7 @@ function showStatus(field, text, retry, failed = false) {
   status.textContent = text; status.style.cssText = `margin:0;padding:8px 0;font:650 12px/1.45 ${UI_FONT};overflow-wrap:anywhere;color:${failed ? "light-dark(#a2342f, #f19a94)" : "light-dark(#171a18, #f1f2ef)"}`;
   box.style.padding = "0 10px";
   box.appendChild(status);
-  if (retry) appendRow(box, tr("retry"), retry);
+  if (retry) appendRow(box, actionLabel, retry);
   else {
     suggestionEl.style.setProperty("pointer-events", "none", "important");
     surfaceStyle = suggestionEl.getAttribute("style");
@@ -414,10 +457,18 @@ async function fillLogin(field, login) {
   } catch { showStatus(field, tr("errorConnection"), () => buildOfferSuggestion(field), true); }
 }
 
+async function requestUnlock(field) {
+  showStatus(field, tr("requestingCode"));
+  const reply = await send({ type: "beginUnlock" }).catch(() => null);
+  if (reply?.popupOpened) removeSuggestion();
+  else showStatus(field, tr(reply?.challengeReady ? "codeReadyClickToolbar" : reply?.errorKey || "unlockFailed"), null, !reply?.challengeReady);
+}
+
 function fillGeneratedPassword(field, password) {
   removeSuggestion(true);
   if (!isNewPasswordField(field) || !isFillable(field)) return;
   const scope = scopeFor(field);
+  const descriptor = scopeDescriptor(scope);
   const candidates = classify(scope).passwords.filter((input) => input === field ||
     (!input.value && isNewPasswordField(input) && !/current-password/i.test(input.autocomplete)));
   const targets = candidates.map((input) => ({ input, type: input.type, form: input.form }));
@@ -426,7 +477,24 @@ function fillGeneratedPassword(field, password) {
     if (input.type !== target.type || input.form !== target.form || !input.isConnected ||
         scopeFor(input) !== scope || !isNewPasswordField(input) || !isFillable(input)) continue;
     setValue(input, password); everPassword.add(input);
+    generatedNewFields.add(input);
   }
+  // A generated password has an explicit recovery path even if a custom page's
+  // submission cannot be observed. This draft never auto-sends to Apple.
+  const currentScope = recoverSameScope(descriptor);
+  if (!currentScope) { notifySaveFailure("errorPageChanged"); return; }
+  const generatedTarget = classify(currentScope).inputs[descriptor.inputs.findIndex(({ input }) => input === field)];
+  if (!generatedTarget || !isReadable(generatedTarget) || !isExposed(generatedTarget) || !generatedTarget.value) {
+    notifySaveFailure("errorPageChanged"); return;
+  }
+  const draftId = generatedDrafts.get(scope) || newRequestId();
+  generatedDrafts.set(currentScope, draftId);
+  const credential = collectSubmittedCredentials(currentScope);
+  if (credential?.password) send({ type: "resolveSave", ...credential, review: true,
+    submissionId: newRequestId(), draftId }).then((reply) => {
+      if (!reply?.ok) notifySaveFailure(reply?.errorKey || "saveFailed");
+    }).catch(() => notifySaveFailure("saveFailed"));
+  rememberSaveSnapshot(currentScope);
 }
 
 async function buildOfferSuggestion(field) {
@@ -440,12 +508,7 @@ async function buildOfferSuggestion(field) {
   if (!result.locked && !logins.length && !generator) return;
   const box = buildSuggestionBox(field);
   if (!box) return;
-  if (result.locked) appendRow(box, tr("openToUnlock"), async () => {
-    showStatus(field, tr("requestingCode"));
-    const reply = await send({ type: "beginUnlock" }).catch(() => null);
-    if (reply?.popupOpened) removeSuggestion();
-    else showStatus(field, tr(reply?.challengeReady ? "codeReadyClickToolbar" : reply?.errorKey || "unlockFailed"), null, !reply?.challengeReady);
-  });
+  if (result.locked) appendRow(box, tr("openToUnlock"), () => requestUnlock(field));
   for (const login of logins) appendAccountRow(box, login, () => fillLogin(field, login));
   if (generator) for (const option of [
     { label: tr("strongPassword"), value: globalThis.FAPASSWORD_PASSWORDS.custom() },
@@ -505,80 +568,277 @@ document.addEventListener("scroll", schedulePosition, true);
 window.addEventListener("resize", schedulePosition);
 window.visualViewport?.addEventListener("resize", schedulePosition);
 window.visualViewport?.addEventListener("scroll", schedulePosition);
-window.addEventListener("pagehide", () => { documentActive = false; cancelFill(); removeSuggestion(); });
+window.addEventListener("pagehide", () => {
+  const intent = lastSaveIntent;
+  if (intent && Date.now() - intent.at < SAVE_INTENT_TTL && (intent.submitted ||
+    (intent.strong && intent.activated && intent.validBefore && intent.activationEvent?.type === "click" &&
+      !intent.activationEvent.defaultPrevented && Date.now() - intent.at < 150))) {
+    if (!intent.submitted && !intent.resetObserved) intent.snapshot = collectSubmittedCredentials(intent.scope) || intent.snapshot;
+    finishSaveIntent(intent);
+  }
+  clearSaveIntent();
+  documentActive = false; usernameContext = null; cancelFill(); removeSuggestion();
+});
 window.addEventListener("pageshow", () => { documentActive = true; frameReady().catch(() => {}); });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") { cancelFill(); removeSuggestion(); }
 });
 
 let lastSaveIntent = null;
-const submitLabel = /\b(sign[\s-]?in|sign[\s-]?up|log[\s-]?in|register|create[\s-]?account|save|update|reset|confirm|activate|enroll|finish|proceed|verify|join|change[\s-]?password|continue|next|submit)\b|登录|登入|登錄|注册|註冊|保存|储存|儲存|更新|重置|确认|確認|提交|下一步|继续|繼續|ログイン|保存する/i;
+const SAVE_INTENT_TTL = 3000;
+// Next/Continue and arbitrary links are not evidence of credential submission.
+const submitLabel = /\b(sign[\s-]?in|sign[\s-]?up|log[\s-]?in|register|create[\s-]?account|(?:save|update|reset|change)[\s-]?(?:password|credentials?))\b|登录|登入|登錄|注册|註冊|(?:保存|储存|儲存|更新|重置|修改)(?:密码|密碼|凭据|憑據)|ログイン/i;
+const controlLabel = (element) => `${element?.textContent || element?.value || ""} ${element?.getAttribute?.("aria-label") || ""}`;
+const isNextControl = (element) => /\b(next|continue)\b|下一步|继续|繼續/i.test(controlLabel(element));
+const isCancelControl = (element) => /\b(cancel|abort|back|forgot|delete)\b|取消|返回|忘记|忘記|删除|刪除/i.test(controlLabel(element));
 function isSubmitControl(element) {
-  if (!(element instanceof Element) || element.matches(":disabled")) return false;
+  if (!(element instanceof Element) || element.matches(":disabled") || element.getAttribute("aria-disabled") === "true") return false;
+  if (isCancelControl(element) || isNextControl(element)) return false;
   if ((element.tagName === "BUTTON" || element.tagName === "INPUT") && element.type === "submit") return true;
-  return submitLabel.test(element.textContent || element.value || "") || /pwd|passw|reset|submit|login|signin|confirm|continue|next|save/i.test(`${element.id} ${element.getAttribute("name") || ""}`);
+  return submitLabel.test(controlLabel(element)) ||
+    /(?:^|[\s_-])(?:login|signin|signup|register|savepassword|updatepassword|resetpassword)(?:$|[\s_-])/i.test(`${element.id} ${element.getAttribute("name") || ""}`);
 }
-const controlFor = (event) => eventElement(event)?.closest?.('button, input[type=submit], input[type=button], [role="button"], a');
-function armIntent(scope) { lastSaveIntent = { scope, at: Date.now(), id: newRequestId() }; }
-function consumeIntent(scope) {
-  const intent = lastSaveIntent; lastSaveIntent = null;
-  return intent && intent.scope === scope && Date.now() - intent.at < 3000 ? intent : null;
+const controlFor = (event) => eventElement(event)?.closest?.('button, input[type=submit], input[type=button], [role="button"]');
+const submissionScope = (control) => control.form || control.closest("form") || scopeFor(control);
+const invalidSubmission = (scope, control) => scope.tagName === "FORM" && !scope.noValidate &&
+  !control?.formNoValidate && scope.matches(":invalid");
+function armIntent(scope, control) {
+  clearSaveIntent();
+  const current = collectSubmittedCredentials(scope);
+  const cached = saveSnapshots.get(scope);
+  const snapshot = current?.password ? current : cached && Date.now() - cached.at < 3000 ? cached.credential : null;
+  lastSaveIntent = { scope, control, snapshot, at: Date.now(), id: newRequestId(),
+    strong: !!control && isSubmitControl(control), validBefore: !invalidSubmission(scope, control) &&
+      !Array.from(scope.querySelectorAll('[aria-invalid="true"]')).some(isVisible),
+    descriptor: scopeDescriptor(scope), passwords: classify(scope).passwords.filter(isReadable) };
+  const intent = lastSaveIntent;
+  intent.timer = setTimeout(() => clearSaveIntent(intent), SAVE_INTENT_TTL);
+  intent.observer = new MutationObserver(() => {
+    if (intent.activated && intent.strong && credentialsRemoved(intent)) finishSaveIntent(intent);
+  });
+  intent.observer.observe(scope.getRootNode(), { childList: true, subtree: true });
+  return lastSaveIntent;
+}
+function clearSaveIntent(intent = lastSaveIntent) {
+  if (!intent) return;
+  clearTimeout(intent.timer); intent.observer?.disconnect();
+  if (lastSaveIntent === intent) lastSaveIntent = null;
+}
+function credentialsRemoved(intent) {
+  if (!intent.passwords.length || intent.passwords.some((input) => input.isConnected && scopeFor(input) === intent.scope)) return false;
+  const currentScope = intent.scope.isConnected ? intent.scope : replacementAtSlot(intent.descriptor);
+  // Replacing credential inputs with other credential inputs is a rerender, not
+  // evidence that the page completed login/registration.
+  return !currentScope || !classify(currentScope).passwords.length;
+}
+function rememberSaveSnapshot(scope) {
+  const credential = collectSubmittedCredentials(scope);
+  if (credential?.password || credential?.errorKey) saveSnapshots.set(scope, { credential, at: Date.now() });
+}
+function rememberUsername(scope, allowNext = false) {
+  const fields = classify(scope);
+  if (fields.passwords.length) return;
+  const users = fields.usernames.filter((input) => input.value && isVisible(input) && !input.disabled);
+  if (users.length === 1) rememberUsernameContext(users[0].value, scope, allowNext);
 }
 
 function collectSubmittedCredentials(scope) {
   const fields = classify(scope);
-  const eligiblePasswords = fields.passwords.filter(isEditable);
+  const eligiblePasswords = fields.passwords.filter(isReadable);
   const passwords = eligiblePasswords.filter((input) => input.value);
   if (!passwords.length) return null;
-  const newPasswords = eligiblePasswords.filter(isNewPasswordField);
-  if (newPasswords.length > 1 && new Set(newPasswords.map((input) => input.value)).size !== 1) {
-    return { errorKey: "errorPasswordConfirmation" };
-  }
-  if (!newPasswords.length && passwords.length > 1) return { errorKey: "errorChooseField" };
+  const isNew = (input) => generatedNewFields.has(input) || isNewPasswordField(input);
+  const newPasswords = eligiblePasswords.filter(isNew);
+  let errorKey;
+  if (newPasswords.length > 1 && new Set(newPasswords.map((input) => input.value)).size !== 1) errorKey = "errorPasswordConfirmation";
+  if (!newPasswords.length && passwords.length > 1) errorKey = "errorChooseField";
   const passwordField = newPasswords[0] || passwords[0];
+  if (!passwordField.value) errorKey = "errorPasswordConfirmation";
+  // A third password in an old/new/confirm form cannot be silently ignored.
+  const unexplained = passwords.filter((input) => input !== passwordField && !isNew(input) &&
+    !/current-password/i.test(input.autocomplete) && !/\b(old|current)[\s_-]*(?:pass|pwd)|旧密码|舊密碼|当前密码/i.test(attrBlob(input)));
+  if (newPasswords.length && unexplained.some((input) => input.value !== passwordField.value)) {
+    errorKey = "errorPasswordConfirmation";
+  }
   const saveKind = newPasswords.length ?
-    (eligiblePasswords.some((input) => !isNewPasswordField(input)) ? "change" : "new") : "login";
-  const users = fields.usernames.filter((input) => input.value && isEditable(input) && input.value !== passwordField.value);
-  if (users.length > 1) return { errorKey: "errorChooseField" };
-  return { username: users[0]?.value || "", password: passwordField.value,
-    saveKind, newPwCtx: newPasswords.length > 0, submissionId: newRequestId() };
+    (eligiblePasswords.some((input) => !isNew(input) && (/current-password/i.test(input.autocomplete) ||
+      /\b(old|current)[\s_-]*(?:pass|pwd)|旧密码|舊密碼|当前密码/i.test(attrBlob(input)))) ? "change" : "new") : "login";
+  // Reading a visible, readonly account is safe; writing to it is still forbidden.
+  const users = fields.usernames.filter((input) => input !== passwordField && input.value && isReadable(input));
+  const contextMatches = usernameContext && (usernameContext.scope === scope ||
+    (usernameContext.allowNext && !usernameContext.scope.isConnected && replacementAtSlot(usernameContext.descriptor) === scope));
+  const hiddenIdentity = fields.inputs.some((input) => input.type === "hidden" &&
+    /(?:^|[\s_-])(?:username|user|account|email|login)(?:$|[\s_-])/i.test(attrBlob(input)));
+  const contextual = !fields.usernames.length && !hiddenIdentity && contextMatches && Date.now() - usernameContext.at < 300000 ? usernameContext.username : "";
+  return { username: users.length === 1 ? users[0].value : users.length > 1 ? "" : contextual,
+    password: passwordField.value, saveKind, newPwCtx: newPasswords.length > 0,
+    needsAccount: users.length > 1, ...(errorKey ? { errorKey } : {}) };
 }
-function maybeOfferSave(scope, intent) {
-  if (!frameIsSafe() || !intent) return;
-  const credential = collectSubmittedCredentials(scope);
+let saveFailureHost = null;
+function notifySaveFailure(messageKey) {
+  if (lastFocused?.isConnected && isVisible(lastFocused)) {
+    showStatus(lastFocused, tr(messageKey), () => send({ type: "beginUnlock" }).catch(() => {}), true, tr("openToUnlock"));
+    return;
+  }
+  saveFailureHost?.remove();
+  const host = document.createElement("div");
+  host.setAttribute("data-fapassword-notice", "");
+  host.style.cssText = "position:fixed!important;right:16px!important;bottom:16px!important;z-index:2147483647!important";
+  const root = host.attachShadow({ mode: "closed" });
+  const notice = document.createElement("div"); notice.setAttribute("role", "alert");
+  notice.style.cssText = "background:#fff;color:#b42318;border:1px solid #ddd;border-radius:8px;padding:12px;max-width:360px;font:13px/1.5 system-ui;box-shadow:0 2px 12px #0003";
+  notice.textContent = tr(messageKey);
+  const close = document.createElement("button"); close.textContent = tr("dismiss");
+  close.addEventListener("click", () => host.remove()); notice.appendChild(close); root.appendChild(notice);
+  (document.body || document.documentElement).appendChild(host); saveFailureHost = host;
+}
+function reportSaveProblem(key, intent) {
+  notifySaveFailure(key);
+  send({ type: "saveNotice", messageKey: key, submissionId: intent.id }).catch(() => {});
+}
+function finishSaveIntent(intent) {
+  if (!frameIsSafe() || !intent || intent.sent || Date.now() - intent.at > SAVE_INTENT_TTL) return;
+  // Native constraint validation already succeeded before the trusted submit.
+  // Rechecking after its handler reset the form validates a different state.
+  if ((!intent.submitted && !intent.validBefore) || (intent.scope.isConnected &&
+      Array.from(intent.scope.querySelectorAll('[aria-invalid="true"]')).some(isVisible))) return;
+  const credential = intent.formDataCredential || intent.submitCredential || intent.snapshot;
   if (!credential) return;
-  if (credential.errorKey) { showStatus(lastFocused, tr(credential.errorKey), null, true); return; }
-  // No awaited work precedes this handoff. Navigation cannot interrupt a digest/query here.
-  send({ type: "resolveSave", ...credential, submissionId: intent.id }).catch(() => {});
+  if (credential.errorKey) { intent.sent = true; reportSaveProblem(credential.errorKey, intent); return; }
+  intent.sent = true;
+  clearSaveIntent(intent);
+  usernameContext = null;
+  send({ type: "resolveSave", ...credential, submissionId: intent.id, draftId: generatedDrafts.get(intent.scope)}).then((reply) => {
+    if (!reply?.ok) { intent.sent = false; reportSaveProblem(reply?.errorKey || "saveFailed", intent); }
+  }).catch(() => { intent.sent = false; reportSaveProblem("saveFailed", intent); });
+}
+function scheduleSaveIntent(intent, event) {
+  intent.activeEvent = event;
+  setTimeout(() => {
+    if (lastSaveIntent !== intent || intent.sent) return;
+    if (!intent.submitted && !intent.resetObserved && intent.scope.isConnected) {
+      intent.snapshot = collectSubmittedCredentials(intent.scope) || intent.snapshot;
+    }
+    if (intent.submitted || (intent.strong && intent.activated && credentialsRemoved(intent))) finishSaveIntent(intent);
+    intent.activeEvent = null;
+  }, 0);
 }
 function onSubmit(event) {
-  if (!event.isTrusted || event.defaultPrevented) return;
+  if (!event.isTrusted) return;
   const form = eventElement(event);
-  const intent = consumeIntent(form);
+  const intent = lastSaveIntent;
+  if (!intent || intent.scope !== form || Date.now() - intent.at > SAVE_INTENT_TTL) return;
+  if (event.submitter && (isNextControl(event.submitter) || isCancelControl(event.submitter))) {
+    if (isNextControl(event.submitter)) rememberUsername(form, true);
+    else usernameContext = null;
+    clearSaveIntent(intent); return;
+  }
+  rememberUsername(form, true);
+  // Click handlers have completed, but submit handlers have not yet cleared or
+  // reset these fields. Never replace this boundary snapshot with reset defaults.
+  intent.submitCredential = collectSubmittedCredentials(form) || intent.snapshot;
+  intent.submitted = true;
   removeSuggestion();
-  maybeOfferSave(form, intent);
+  scheduleSaveIntent(intent, event);
 }
 document.addEventListener("submit", onSubmit, true);
+function onReset(event) {
+  const intent = lastSaveIntent;
+  if (!event.isTrusted || !intent || eventElement(event) !== intent.scope || intent.sent) return;
+  intent.snapshot = collectSubmittedCredentials(intent.scope) || intent.snapshot;
+  intent.resetObserved = true;
+}
+function onFormData(event) {
+  const intent = lastSaveIntent;
+  if (!event.isTrusted || !intent || eventElement(event) !== intent.scope || intent.sent) return;
+  const credential = collectSubmittedCredentials(intent.scope) || intent.submitCredential || intent.snapshot;
+  if (!credential || credential.errorKey) return;
+  const fields = classify(intent.scope);
+  const passwords = fields.passwords.filter(isReadable);
+  const password = passwords.find((input) => generatedNewFields.has(input) || isNewPasswordField(input)) || passwords[0];
+  const values = password?.name ? event.formData.getAll(password.name) : [];
+  if (values.length !== 1 || typeof values[0] !== "string") return;
+  const users = fields.usernames.filter((input) => input.value && isReadable(input));
+  const usernames = users.length === 1 && users[0].name ? event.formData.getAll(users[0].name) : [];
+  intent.formDataCredential = { ...credential, password: values[0],
+    ...(usernames.length === 1 && typeof usernames[0] === "string" ? { username: usernames[0] } : {}) };
+}
+document.addEventListener("reset", onReset, true);
+document.addEventListener("formdata", onFormData, true);
+document.addEventListener("input", (event) => {
+  const field = eventElement(event);
+  if (!event.isTrusted || !(field instanceof HTMLInputElement) || !isLoginField(field)) return;
+  observeSubmissionRoot(field);
+  const scope = scopeFor(field);
+  const draftId = generatedDrafts.get(scope);
+  const descriptor = scopeDescriptor(scope);
+  clearTimeout(draftUpdateTimers.get(scope));
+  draftUpdateTimers.set(scope, setTimeout(() => {
+    const currentScope = recoverSameScope(descriptor);
+    if (!currentScope) {
+      if (draftId) send({ type: "updateSaveDraft", draftId, credential: { errorKey: "errorChooseField" } }).catch(() => notifySaveFailure("saveFailed"));
+      return;
+    }
+    rememberSaveSnapshot(currentScope);
+    if (!draftId) return;
+    generatedDrafts.set(currentScope, draftId);
+    const credential = collectSubmittedCredentials(currentScope);
+    send({ type: "updateSaveDraft", draftId, credential }).then((reply) => {
+      if (!reply?.ok) notifySaveFailure(reply?.errorKey || "saveFailed");
+    }).catch(() => notifySaveFailure("saveFailed"));
+  }, 0));
+}, true);
 document.addEventListener("pointerdown", (event) => {
   if (!event.isTrusted || event.button !== 0) return;
+  clearSaveIntent();
   const control = controlFor(event);
-  if (isSubmitControl(control)) { observeSubmissionRoot(control); armIntent(control.form || scopeFor(control)); }
-}, true);
-document.addEventListener("click", (event) => {
-  if (!event.isTrusted || event.defaultPrevented) return;
-  const control = controlFor(event);
-  if (isSubmitControl(control) && !control.form) {
-    const scope = scopeFor(control);
-    maybeOfferSave(scope, consumeIntent(scope));
+  if (isCancelControl(control)) usernameContext = null;
+  if (control && (isSubmitControl(control) || isNextControl(control))) rememberUsername(submissionScope(control), true);
+  if (isSubmitControl(control)) {
+    observeSubmissionRoot(control);
+    // Some sites complete their custom action on pointerdown and remove the
+    // button before a click can occur. Removal is still required as evidence.
+    armIntent(submissionScope(control), control).activated = true;
   }
 }, true);
-document.addEventListener("keydown", (event) => {
-  if (!event.isTrusted || event.defaultPrevented || !["Enter", " "].includes(event.key)) return;
+document.addEventListener("click", (event) => {
+  if (!event.isTrusted || event.button !== 0) return;
   const control = controlFor(event);
-  if (isSubmitControl(control)) { observeSubmissionRoot(control); armIntent(control.form || scopeFor(control)); return; }
+  if (isCancelControl(control)) { usernameContext = null; clearSaveIntent(); return; }
+  if (control && isNextControl(control)) { rememberUsername(submissionScope(control), true); clearSaveIntent(); return; }
+  if (!isSubmitControl(control)) return;
+  const scope = submissionScope(control);
+  rememberUsername(scope, true);
+  const intent = lastSaveIntent?.scope === scope && Date.now() - lastSaveIntent.at < SAVE_INTENT_TTL ? lastSaveIntent : armIntent(scope, control);
+  intent.strong = true;
+  intent.activated = true;
+  intent.activationEvent = event;
+  removeSuggestion();
+  // Native controls must actually submit. Do not save just because their click
+  // was cancelled, or Enter did not cause implicit submission.
+  scheduleSaveIntent(intent, event);
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (!event.isTrusted || event.defaultPrevented || event.isComposing || event.keyCode === 229 || !["Enter", " "].includes(event.key)) return;
+  const control = controlFor(event);
+  if (isCancelControl(control)) { usernameContext = null; clearSaveIntent(); return; }
+  if (control && isNextControl(control)) { rememberUsername(submissionScope(control), true); clearSaveIntent(); return; }
+  if (isSubmitControl(control)) {
+    const scope = submissionScope(control);
+    rememberUsername(scope, true);
+    observeSubmissionRoot(control); const intent = armIntent(scope, control);
+    if (control.getAttribute("role") === "button" && control.tagName !== "BUTTON") { intent.activated = true; scheduleSaveIntent(intent, event); }
+    return;
+  }
   const field = eventElement(event);
   if (event.key !== "Enter" || !(field instanceof HTMLInputElement) || !isLoginField(field)) return;
   const scope = scopeFor(field);
-  armIntent(scope);
-  if (!field.form) { removeSuggestion(); maybeOfferSave(scope, consumeIntent(scope)); }
+  observeSubmissionRoot(field); rememberUsername(scope, true);
+  const intent = armIntent(scope);
+  // A password-only Enter handler that removes its form is an observable SPA
+  // transition. Composing Enter and unchanged forms remain excluded.
+  intent.strong = true;
+  intent.activated = true;
+  scheduleSaveIntent(intent, event);
+  // The browser or application must subsequently dispatch a trusted submit.
 }, true);

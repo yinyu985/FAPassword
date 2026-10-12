@@ -6,8 +6,8 @@ const NB = 384, g = 5n;
 const kind = "__FAPASSWORD_MOCK_KIND__";
 const state = globalThis.testNative = {
   kind, pin: "123456", counters: { names: 0, passwords: 0, saves: 0, challenges: 0 },
-  frames: [], messageCounts: {},
-  delays: { names: 0, passwords: 0, saves: 0 }, entries: null, statuses: {}, saves: [], ports: [],
+  frames: [], messageCounts: {}, queryTargets: [],
+  delays: { names: 0, passwords: 0, saves: 0 }, entries: null, statuses: {}, saves: [], saveTargets: [], ports: [],
   invalidate() { for (const port of state.ports) if (!port.closed) port.emit({ cmd: 10 }); },
 };
 chrome.runtime.onMessage.addListener((message, sender) => {
@@ -75,11 +75,14 @@ chrome.runtime.connectNative = (host) => {
     if (name === "names" && state.namesGate) await state.namesGate;
     if (state.delays[name]) await new Promise((resolve) => setTimeout(resolve, state.delays[name]));
     if (message.cmd === 6) {
+      state.saveTargets.push({ tabId: message.tabId, frameId: message.frameId });
       state.saves.push({ username: data.NUSR, password: data.NPWD, host: data.NURL,
         qid: payload.QID, action: data.ACT });
       if (state.dropSaveAck) return;
       return onMessage.emit({ cmd: 6 });
     }
+    if (message.url !== data.URL) throw new Error('test query host mismatch between envelope and encrypted payload');
+    state.queryTargets.push({ command: message.cmd, tabId: message.tabId, frameId: message.frameId, host: data.URL });
     const selected = message.cmd === 4 ? entries() : entries().filter((entry) => entry.USR === data.USR);
     response = { STATUS: state.statuses[name] ?? (selected.length ? 0 : 3), Entries: selected };
     const iv = randomBytes(16);

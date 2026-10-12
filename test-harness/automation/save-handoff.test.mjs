@@ -52,22 +52,32 @@ try {
   await waitFor(async () => (await savedState(second.saveId))?.status === 'submitted');
   assert.equal(testNative.counters.saves, 2);
   const duplicate = await submit('existing-user', 'AnotherFixture789');
-  await waitFor(async () => (await savedState(duplicate.saveId))?.status === 'skipped');
-  assert.equal(testNative.counters.saves, 2);
-  console.log('PASS different password versions are sent; identical recent submissions are skipped');
+  // A repeated delivery uses the same explicit operation identity, not a password fingerprint.
+  const sameId = crypto.randomUUID();
+  const identical1 = await submit('same-intent', 'IdenticalFixture123', { submissionId: sameId });
+  const identical2 = await submit('same-intent', 'IdenticalFixture123', { submissionId: sameId });
+  assert.equal(identical1.saveId, identical2.saveId);
+  await waitFor(async () => (await savedState(identical1.saveId))?.status === 'submitted');
+  await waitFor(async () => (await savedState(duplicate.saveId))?.status === 'submitted');
+  assert.equal(testNative.counters.saves, 4);
+  console.log('PASS distinct submissions are sent; repeated delivery of one submission is idempotent');
 
   const noAccount = await submit('', 'UnidentifiedFixture123');
   await waitFor(async () => (await savedState(noAccount.saveId))?.messageKey === 'saveNoAccount');
-  assert.equal(testNative.counters.saves, 2);
-  console.log('PASS ordinary login without a username cannot initiate an account update');
+  assert.equal(testNative.counters.saves, 4);
+  assert.equal((await savedState(noAccount.saveId)).status, 'needsAccount');
+  assert.equal((await call({ type: 'retrySave', saveId: noAccount.saveId, username: 'chosen-account' })).ok, true);
+  await waitFor(async () => (await savedState(noAccount.saveId))?.status === 'submitted');
+  assert.equal(testNative.saves.at(-1).username, 'chosen-account');
+  console.log('PASS missing account is retained for explicit selection, not silently discarded');
 
   testNative.invalidate();
   const queued = await submit('queued-user', 'QueuedFixture123');
   await waitFor(async () => (await savedState(queued.saveId))?.messageKey === 'saveWaitingUnlock');
-  assert.equal(testNative.counters.saves, 2);
+  assert.equal(testNative.counters.saves, 5);
   await unlock();
   await waitFor(async () => (await savedState(queued.saveId))?.status === 'submitted');
-  assert.equal(testNative.counters.saves, 3);
+  assert.equal(testNative.counters.saves, 6);
   console.log('PASS locked submissions wait for unlock before native delivery');
 
   // Apple's save is one-way. An absent or late cmd-6 reply cannot block a real
@@ -77,7 +87,7 @@ try {
   await waitFor(async () => (await savedState(sent.saveId))?.status === 'submitted');
   assert.equal((await call({ type: 'getLogins' })).ok, true);
   assert.equal((await call({ type: 'getState' })).state, 'unlocked');
-  assert.equal(testNative.counters.saves, 4);
+  assert.equal(testNative.counters.saves, 7);
   testNative.delays.names = 100;
   await call({ type: 'refreshLogins' });
   const names = call({ type: 'getLogins' });
@@ -95,7 +105,7 @@ try {
   try {
     await blockingQuery;
     await waitFor(async () => (await savedState(expired.saveId))?.status === 'expired');
-    assert.equal(testNative.counters.saves, 4);
+    assert.equal(testNative.counters.saves, 7);
   } finally { Date.now = realNow; testNative.delays.names = 0; }
   console.log('PASS expiration while waiting behind a native query prevents save delivery');
 
@@ -112,7 +122,7 @@ try {
   const uncertain = await submit('uncertain-user', 'UncertainFixture123');
   await waitFor(async () => (await savedState(uncertain.saveId))?.status === 'uncertain');
   await new Promise(resolve => setTimeout(resolve, 2200));
-  assert.equal(testNative.counters.saves, 6);
+  assert.equal(testNative.counters.saves, 9);
   console.log('PASS ambiguous native post failure reports uncertain and is not automatically retried');
 } finally {
   const state = await call({ type: 'getState' });

@@ -31,32 +31,39 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
   const normalIcons = Object.fromEntries(Object.entries(icons).map(([size, path]) => [size, api.runtime.getURL(path)]));
   let desired = null;
   let applied = null;
+  let desiredAttention = 0;
+  let appliedAttention = null;
   let running = null;
   let failureIcon = null;
   async function render() {
-    while (desired !== applied) {
+    while (desired !== applied || desiredAttention !== appliedAttention) {
       const status = desired;
+      const attention = desiredAttention;
       const notReady = status !== "unlocked";
       let details = { path: normalIcons };
       if (notReady) {
         failureIcon ||= await loadFailureIcon();
         // Recovery may have happened while the bitmap was being decoded.
-        if (status !== desired) continue;
+        if (status !== desired || attention !== desiredAttention) continue;
         details = { imageData: failureIcon };
       }
-      const title = api.i18n.getMessage(titleKeys[status]);
+      const title = api.i18n.getMessage(attention ? "toolbarSaveAttention" : titleKeys[status]);
       // Serialize writes so a slow failed-state update cannot overwrite recovery.
       const results = await Promise.allSettled([
         api.action.setIcon(details), api.action.setTitle({ title }),
+        api.action.setBadgeText?.({ text: attention ? String(attention) : "" }),
+        api.action.setBadgeBackgroundColor?.({ color: "#a2342f" }),
       ]);
       for (const result of results) if (result.status === "rejected") throw result.reason;
       applied = status;
+      appliedAttention = attention;
     }
   }
   return {
-    update(state, connecting = false) {
+    update(state, connecting = false, saveAttention = 0) {
       if (!api.action?.setIcon || !api.action?.setTitle) return Promise.resolve();
       desired = connecting ? "connecting" : state;
+      desiredAttention = saveAttention;
       if (!running) {
         let completed = false;
         running = render().then(() => { completed = true; }).catch(() => {
@@ -64,7 +71,7 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
           console.warn("FAPassword toolbar status could not be updated");
         }).finally(() => {
           running = null;
-          if (completed && desired !== applied) this.update(desired);
+          if (completed && (desired !== applied || desiredAttention !== appliedAttention)) this.update(desired, false, desiredAttention);
         });
       }
       return running;

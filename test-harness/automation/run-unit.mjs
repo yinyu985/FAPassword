@@ -15,6 +15,11 @@ const tests = [
   "session-cache.test.mjs",
   "pin-session.test.mjs",
   "save-handoff.test.mjs",
+  "native-routing.test.mjs",
+  "save-store.test.mjs",
+  "save-recovery.test.mjs",
+  "save-failures.test.mjs",
+  "save-queue.test.mjs",
   "build-safety.test.mjs",
 ];
 let failed = 0;

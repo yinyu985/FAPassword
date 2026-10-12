@@ -13,6 +13,7 @@
   "toolbarNoHelper": { "message": "FAPassword — Apple Passwords helper unavailable. Open for details." },
   "toolbarLocked": { "message": "FAPassword — Locked. Open to unlock Apple Passwords." },
   "toolbarUnlocked": { "message": "FAPassword — Connected and unlocked." },
+  "toolbarSaveAttention": { "message": "FAPassword — Password saving needs attention. Open to unlock or review." },
   "passwordActions": {
     "message": "Password actions"
   },
@@ -315,8 +316,17 @@
     "message": "No new save request is needed for these unchanged credentials."
   },
   "saveNoAccount": {
-    "message": "No account could be identified for this login."
+    "message": "Account is unclear. Enter the account below to confirm saving; the candidate expires in 3 minutes."
   },
+  "saveReview": { "message": "Generated password retained for 3 minutes. Submit the form, or confirm saving here." },
+  "saveConfirm": { "message": "Confirm saving" },
+  "saveAccountPlaceholder": { "message": "Account / email / phone" },
+  "saveStorageFailed": { "message": "Could not retain the save request across a background restart. Keep this page open and retry." },
+  "saveRecoveredReview": { "message": "Request recovered after a background restart. Check the account and confirm saving again." },
+  "saveCancelling": { "message": "Recording cancellation. This request will not be sent while cancellation is pending." },
+  "saveCancelFailed": { "message": "Cancellation could not be retained. The request is paused; retry cancellation before it expires." },
+  "saveRecoveryFailed": { "message": "Pending save requests could not be read. Retry; an empty list does not mean there are no pending requests." },
+  "saveQueueFull": { "message": "Too many pending saves. Confirm or cancel an existing request, then retry." },
   "refillComplete": {
     "message": "The selected account was filled again."
   },

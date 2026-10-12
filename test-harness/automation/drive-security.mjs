@@ -24,7 +24,7 @@ async function ticket() { const response=await api({type:'getLogins'}); assert.e
 async function toolbar(username='test@example.com', targetId) { return api({type:'fillOnPage',targetId:targetId||(await ticket()).targetId,loginName:{username}}); }
 async function offer(selector='#u') { await page.locator(selector).click(); await page.locator('[role=option]').first().waitFor(); }
 async function inline(name='test@example.com') { await page.getByRole('option',{name,exact:true}).click(); }
-async function test(name, fn) { if(process.env.FAPASSWORD_TEST_FILTER && !name.includes(process.env.FAPASSWORD_TEST_FILTER)) return; try { await fn();results.push(true);console.log('PASS '+name); } catch(error){results.push(false);console.error('FAIL '+name+' -> '+error.stack); if(page) console.error('DETAIL',await page.locator('[role=status]').allTextContents(),await worker.evaluate(()=>({counters:testNative.counters,error:testNative.error})));   } }
+async function test(name, fn) { if(process.env.FAPASSWORD_TEST_FILTER && !name.includes(process.env.FAPASSWORD_TEST_FILTER)) return; try { await fn();results.push(true);console.log('PASS '+name); } catch(error){results.push(false);console.error('FAIL '+name+' -> '+error.stack); if(page) console.error('DETAIL',await page.locator('[role=status]').allTextContents(),await worker.evaluate(()=>({counters:testNative.counters,error:testNative.error}))); } finally { for(const save of (await api({type:'getState'})).saves||[]) await api({type:'cancelSave',saveId:save.id}); } }
 async function unlock() {
   await worker.evaluate(()=>{testNative.statuses={};testNative.delays={names:0,passwords:0,saves:0};});
   if ((await api({type:'retryConnection'})).state === 'unlocked') return;
@@ -183,8 +183,11 @@ try {
     await open();await worker.evaluate(()=>testNative.statuses.names=9);const result=await api({type:'getLogins'});
     assert.equal(result.ok,false);assert.notEqual(result.state,'unlocked');await unlock();
   });
-  await test('space in a formless login field does not submit a password; Enter does',async()=>{
+  await test('space in a formless field does not save; Enter with a real SPA transition does',async()=>{
     await open('<section><input id="u" autocomplete="username"><input id="p" type="password"><button type="button">登录</button></section>');
+    await page.evaluate(()=>document.getElementById('p').addEventListener('keydown',event=>{
+      if(event.key==='Enter'){event.preventDefault();document.querySelector('section').remove();}
+    }));
     await page.locator('#u').fill('existing');await page.locator('#p').fill('changed-password');await page.keyboard.press('Escape');
     const before=await count('saves');await page.keyboard.press('Space');await page.waitForTimeout(150);assert.equal(await count('saves'),before);
     if(process.env.FAPASSWORD_TEST_FILTER) {
@@ -211,6 +214,53 @@ try {
   });
   await test('same password with a different username is not suppressed as unchanged',async()=>{
     await open();await toolbar();await page.locator('#u').fill('another-user');const before=await count('saves');await page.locator('button').click();await wait(async()=>await count('saves')===before+1);
+  });
+  for (const [name,button] of [
+    ['type=button','<button type="button">Create account</button>'],
+    ['cancelled submit click','<button>Create account</button>'],
+    ['ARIA control','<div role="button" tabindex="0" aria-label="Create account">Register</div>'],
+  ]) await test('generated registration via '+name+' captures before SPA removes fields',async()=>{
+    await open('<form><input id="u" autocomplete="username" required><input id="p" type="password" autocomplete="new-password" required><input id="c" type="password" autocomplete="new-password" required>'+button+'</form>');
+    await page.locator('#u').fill('spa-'+name);await offer('#p');await page.locator('[data-op-generate]').first().click();
+    const generated=await page.inputValue('#p');assert.equal(await page.inputValue('#c'),generated);
+    await page.evaluate(()=>{
+      window.submits=0;document.querySelector('form').addEventListener('submit',()=>window.submits++);
+      document.querySelector('button,[role="button"]').addEventListener('click',event=>{
+        event.preventDefault();document.querySelectorAll('input').forEach(input=>{input.disabled=true;input.value='';});
+        document.querySelector('form').remove();
+      });
+    });
+    const before=await count('saves');const messages=await worker.evaluate(()=>testNative.messageCounts.resolveSave||0);
+    await page.locator('button,[role="button"]').click();await wait(async()=>await count('saves')===before+1);
+    assert.equal(await page.evaluate(()=>window.submits),0);
+    assert.equal(await worker.evaluate(()=>testNative.messageCounts.resolveSave),messages+1);
+    assert.deepEqual(await worker.evaluate(()=>testNative.saves.at(-1)),{username:'spa-'+name,password:generated,host:new URL(base).host,qid:'CmdNewAccount4URL',action:4});
+  });
+  await test('generated registration via native submit sends exactly one snapshot',async()=>{
+    await open('<form><input id="u" autocomplete="username"><input id="p" type="password" autocomplete="new-password"><input id="c" type="password" autocomplete="new-password"><button>Create account</button></form>');
+    await page.locator('#u').fill('generated-native');await offer('#p');await page.locator('[data-op-generate]').first().click();
+    const before=await count('saves');const messages=await worker.evaluate(()=>testNative.messageCounts.resolveSave||0);
+    await page.locator('button').click();await wait(async()=>await count('saves')===before+1);
+    assert.equal(await worker.evaluate(()=>testNative.messageCounts.resolveSave),messages+1);
+  });
+  await test('invalid registration and unrelated password controls cannot send snapshots',async()=>{
+    await open('<form><input id="u" autocomplete="username" value="invalid-registration"><input id="p" type="password" autocomplete="new-password" value="Fixture123"><input required id="required"><button>Create account</button><button id="toggle-password" type="button">Show password</button></form>');
+    const before=await worker.evaluate(()=>testNative.messageCounts.resolveSave||0);
+    await page.locator('button').first().click();await page.locator('#required').fill('valid');
+    await page.locator('#toggle-password').click();
+    await page.evaluate(()=>document.querySelector('button').click());
+    await page.waitForTimeout(150);assert.equal(await worker.evaluate(()=>testNative.messageCounts.resolveSave||0),before);
+  });
+  for (const mode of ['SPA','native']) await test('generated registration via '+mode+' Enter sends exactly one snapshot',async()=>{
+    await open('<form><input id="u" autocomplete="username"><input id="p" type="password" autocomplete="new-password"><input id="c" type="password" autocomplete="new-password"><button>Create account</button></form>');
+    await page.locator('#u').fill('enter-'+mode);await offer('#p');await page.locator('[data-op-generate]').first().click();
+    if(mode==='SPA')await page.evaluate(()=>document.querySelector('#c').addEventListener('keydown',event=>{
+      if(event.key==='Enter'){event.preventDefault();document.querySelector('form').remove();}
+    }));
+    await page.locator('#c').focus();const before=await count('saves');const messages=await worker.evaluate(()=>testNative.messageCounts.resolveSave||0);
+    await page.keyboard.press('Enter');await wait(async()=>await count('saves')===before+1);
+    assert.equal(await worker.evaluate(()=>testNative.messageCounts.resolveSave),messages+1);
+    assert.equal(await worker.evaluate(()=>testNative.saves.at(-1).qid),'CmdNewAccount4URL');
   });
   await test('save snapshot excludes hidden fields and unrelated forms',async()=>{
     await open(markup.replace('</form>','<input type="password" style="display:none" value="poison"></form>')+'<form><input autocomplete="username" value="other"><input type="password" value="other-password"></form>');
@@ -247,9 +297,18 @@ try {
     await wait(async()=>await count('saves')===before+1);
   });
   await test('locked submission exposes pending state and can be cancelled',async()=>{
-    await worker.evaluate(()=>testNative.invalidate());await open();await page.locator('#u').fill('queued');await page.locator('#p').fill('queued-secret');await page.locator('button').click();
-    let entry;await wait(async()=>{entry=(await api({type:'getState'})).saves.find(s=>s.username==='queued');return entry?.status==='queued';});
-    assert.equal(entry.messageKey,'saveWaitingUnlock');await api({type:'cancelSave',saveId:entry.id});const before=await count('saves');await unlock();assert.equal(await count('saves'),before);
+    await worker.evaluate(()=>{testNative.openPopup=chrome.action.openPopup;testNative.popupRequests=0;chrome.action.openPopup=async()=>{testNative.popupRequests++;};testNative.invalidate();});
+    try {
+      await open();await page.locator('#u').fill('queued');await page.locator('#p').fill('queued-secret');await page.locator('button').click();
+      let entry;await wait(async()=>{entry=(await api({type:'getState'})).saves.find(s=>s.username==='queued');return entry?.status==='queued';});
+      assert.equal(entry.messageKey,'saveWaitingUnlock');assert.equal(await worker.evaluate(()=>testNative.popupRequests),1);
+      await wait(async()=>await worker.evaluate(()=>chrome.action.getBadgeText({}))==='1');
+      await page.goto(base+'/security-regression.html?registered');
+      assert.equal(await worker.evaluate(()=>chrome.action.getBadgeText({})),'1');
+      assert.equal(await worker.evaluate(()=>chrome.action.getTitle({})),await worker.evaluate(()=>chrome.i18n.getMessage('toolbarSaveAttention')));
+      await api({type:'cancelSave',saveId:entry.id});await wait(async()=>await worker.evaluate(()=>chrome.action.getBadgeText({}))==='');
+      const before=await count('saves');await unlock();assert.equal(await count('saves'),before);
+    } finally {await worker.evaluate(()=>{chrome.action.openPopup=testNative.openPopup;});}
   });
   await test('expired queued submissions are not sent after unlock',async()=>{
     await worker.evaluate(()=>testNative.invalidate());await open();

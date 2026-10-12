@@ -420,7 +420,7 @@ export class ApplePasswords {
     }, { signal });
   }
 
-  async _encryptedQuery(cmd, tabId, hostname, payloadBody, timeoutMs) {
+  async _encryptedQuery(cmd, tabId, hostname, payloadBody, timeoutMs, frameId = 0) {
     const session = this.session;
     const epoch = this.epoch;
     this._assertSession(session, epoch);
@@ -430,7 +430,7 @@ export class ApplePasswords {
       cmd,
       {
         tabId,
-        frameId: 0,
+        frameId,
         url: hostname,
         payload: { QID: cmd === Command.GET_LOGIN_NAMES_FOR_URL ? "CmdGetLoginNames4URL" : "CmdGetPassword4LoginName", SMSG: JSON.stringify({ TID: session.username, SDATA: sdata }) },
       },
@@ -451,9 +451,9 @@ export class ApplePasswords {
     }
   }
 
-  async getLoginNamesForURL(tabId, url, { signal } = {}) {
+  async getLoginNamesForURL(tabId, url, { signal, frameId = 0 } = {}) {
     if (!this.ready) throw new Error("not unlocked");
-    const { hostname } = new URL(url);
+    const { host: hostname } = new URL(url);
     return this._withLock(async () => {
       const res = await this._encryptedQuery(
         Command.GET_LOGIN_NAMES_FOR_URL,
@@ -461,6 +461,7 @@ export class ApplePasswords {
         hostname,
         { ACT: Action.GHOST_SEARCH, URL: hostname },
         5000,
+        frameId,
       );
       if (res.STATUS === QueryStatus.Success)
         return (res.Entries ?? []).map((e) => ({ username: e.USR, sites: e.sites }));
@@ -469,9 +470,9 @@ export class ApplePasswords {
     }, { signal, timeoutMs: 8000 });
   }
 
-  async getPasswordForLoginName(tabId, url, loginName, { signal } = {}) {
+  async getPasswordForLoginName(tabId, url, loginName, { signal, frameId = 0 } = {}) {
     if (!this.ready) throw new Error("not unlocked");
-    const { hostname } = new URL(url);
+    const { host: hostname } = new URL(url);
     return this._withLock(async () => {
       let res;
       try {
@@ -483,6 +484,7 @@ export class ApplePasswords {
           hostname,
           { ACT: Action.SEARCH, URL: hostname, USR: loginName.username },
           PASSWORD_READ_TIMEOUT_MS,
+          frameId,
         );
       } catch (error) {
         if (/timeout waiting for response/i.test(String(error?.message ?? error))) {
@@ -542,12 +544,15 @@ export class ApplePasswords {
       try {
         this.port.postMessage({ cmd: Command.SET_PASSWORD_FOR_LOGIN_NAME_URL, ...body });
       } catch (error) {
-        error.mayHaveBeenSent = true;
-        this.disconnect(error);
-        throw error;
+        // Port implementations can throw non-Error or non-extensible values.
+        // Never lose the uncertainty marker and then replay a possibly sent save.
+        const failure = new Error("native save post failed");
+        failure.mayHaveBeenSent = true;
+        this.disconnect(failure);
+        throw failure;
       }
       return true;
-    }, { signal });
+    }, { signal, timeoutMs: Number.isFinite(expiresAt) ? Math.max(1, expiresAt - Date.now()) : null });
   }
 
   disconnect(error = new Error("connection closed")) {

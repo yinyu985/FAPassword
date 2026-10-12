@@ -51,10 +51,20 @@ check("checkout contact email is not a username field", !policy.isUsernameField(
 const username = new Input({ name: "identity", autocomplete: "username" });
 check("explicit two-step username remains eligible", policy.isUsernameField(username));
 check("single-character numeric OTP is excluded", !policy.isUsernameField(new Input({ name: "code", inputmode: "numeric", maxlength: "1" })));
+check("explicit current-password wins over a passcode name", policy.isPasswordish(new Input({ type: "password", name: "passcode", autocomplete: "current-password" })));
+check("explicit OTP still wins over password type", !policy.isPasswordish(new Input({ type: "password", autocomplete: "one-time-code" })));
+check("password hints are not credentials", !policy.isPasswordish(new Input({ name: "passwordHint" })));
+check("Chinese account and phone identities are recognized", policy.isUsernameField(new Input({ name: "account", placeholder: "账号" })) && policy.isUsernameField(new Input({ type: "tel", name: "phone" })));
 check("search boxes are excluded", !policy.isUsernameField(new Input({ type: "search", name: "username-search" })));
 
 const visiblePassword = new Input({ type: "password" });
 check("visible in-viewport password is fillable", policy.isFillable(visiblePassword));
+const readonlyPassword = new Input({ type: "password" });
+readonlyPassword.readOnly = true;
+check("readonly credentials can be read for saving but never filled", policy.isReadable(readonlyPassword) && !policy.isFillable(readonlyPassword));
+const disabledPassword = new Input({ type: "password" });
+disabledPassword.disabled = true;
+check("disabled credentials are neither readable nor fillable", !policy.isReadable(disabledPassword) && !policy.isFillable(disabledPassword));
 const displayNone = new Input({ type: "password" });
 displayNone.computedStyle = { position: "static", display: "none", visibility: "visible", opacity: "1" };
 displayNone.offsetParent = null;

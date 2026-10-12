@@ -102,6 +102,7 @@ try {
         ['uncertain', 'saveUncertain', true], ['failed', 'saveFailed', true],
         ['expired', 'saveExpired', true], ['cancelled', 'saveCancelled', false],
         ['skipped', 'saveUnchanged', false], ['skipped', 'saveNoAccount', true],
+        ['review', 'saveRecoveredReview', false], ['cancelPending', 'saveCancelFailed', true],
       ];
       for (const [status, messageKey, failed] of saveStates) {
         await popup.evaluate(({ status, messageKey }) => fixture.emit({ type: 'state', state: 'unlocked', saves: [
@@ -109,6 +110,10 @@ try {
         ] }), { status, messageKey });
         assert.deepEqual(await metrics('#save-list p'), failed ? saveError : normal, messageKey);
       }
+      await popup.evaluate(() => fixture.emit({ type: 'state', state: 'unlocked', saves: [], saveRecoveryError: 'saveStorageFailed' }));
+      assert.deepEqual(await metrics('#save-recovery-error'), saveError);
+      await popup.evaluate(() => fixture.emit({ type: 'state', state: 'unlocked', saves: [], saveRecoveryError: null }));
+      assert.equal(await popup.locator('#save-recovery-error').isVisible(), false);
       await popup.evaluate(() => { fixture.logins = { ok: false, errorKey: 'loadFailed' }; });
       await popup.locator('#refresh').click();
       await popup.waitForFunction(() => document.querySelector('#status-message').classList.contains('failed'));
