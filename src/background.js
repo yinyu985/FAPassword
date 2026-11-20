@@ -1,13 +1,16 @@
 // Owns native transport, session-bound caches and document-bound fill/save operations.
 import { ApplePasswords, State } from "./protocol.js";
-import { activeTab, errorKey, isLocalDevHost, normalizePin, pageContext } from "./shared.js";
+import { activeTab, errorKey, normalizePin, pageContext } from "./shared.js";
+import "./page-policy.js";
 import { SessionCache, credentialKey } from "./session-cache.js";
 import { beginInlineUnlock } from "./unlock-flow.js";
+import { createLanguage } from "./language.js";
 import { createToolbarStatus } from "./toolbar-status.js";
 import { createSaveStore } from "./save-store.js";
 
 const client = new ApplePasswords();
-const toolbar = createToolbarStatus(chrome);
+const language = createLanguage(chrome, () => updateToolbar());
+const toolbar = createToolbarStatus(chrome, undefined, language.t);
 let connectionAttempt = null;
 let connecting = false;
 const passwordCache = new SessionCache(120000, () => client.ready);
@@ -23,33 +26,41 @@ const recentFills = new Map();
 const pendingSaves = new Map();
 const SAVE_TTL = 180000;
 const saveStore = createSaveStore(chrome.storage?.session);
-let saveStorageError = false;
 let savesRecovered = false;
 let saveRecoveryError = null;
 let saveRecoveryAttempt = null;
 let flushing = false;
 let lastConnectionError = null;
 let revision = 0;
+let savePreferenceVersion = 0;
+
+async function readAutomaticSaveSetting() {
+  const version = savePreferenceVersion;
+  const settings = await chrome.storage.local.get("automaticSave");
+  if (version !== savePreferenceVersion) throw new Error("save preference changed during read");
+  return settings.automaticSave === true;
+}
 
 const ownUi = (sender) => sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("src/popup.html");
 const frameKey = (tabId, frameId) => `${tabId}:${frameId}`;
 const operationKey = (documentId, requestId) => `${documentId}:${requestId}`;
 const usablePage = (url) => {
   const context = pageContext(url);
-  return context && ["http:", "https:"].includes(context.url.protocol) &&
-    (context.secure || isLocalDevHost(context.host)) ? context : null;
+  return context && globalThis.FAPASSWORD_PAGE_POLICY.allows(context.url) ? context : null;
 };
+const unavailablePageKey = (url) => pageContext(url)?.url.protocol === "http:" && !usablePage(url) ? "httpPageUnavailable" : "pageUnavailable";
 const failure = (error) => ({ ok: false, errorKey: error?.message === "save queue full" ? "saveQueueFull" : errorKey(error), error: String(error?.message ?? error), state: client.state });
 const digest = async (value) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
   (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 function publicSaves() {
-  return [...pendingSaves.values()].map(({ id, host, username, saveKind, status, expiresAt, messageKey }) =>
-    ({ id, host, username, saveKind, status, expiresAt, messageKey }));
+  return [...pendingSaves.values()].filter(entry => entry.status).map(({ id, host, username, saveKind, status, expiresAt, messageKey, manual }) =>
+    ({ id, host, username, saveKind, status, expiresAt, messageKey, manual,
+      accountRequired: status === "needsAccount" || (manual && !client.capabilities?.canSaveAccountWithEmptyUserName) }));
 }
 function updateToolbar() {
   const attention = [...pendingSaves.values()].filter((entry) =>
-    ["queued", "review", "blocked", "needsAccount", "failed", "uncertain", "expired", "notice", "cancelPending"].includes(entry.status)).length;
+    ["queued", "review", "blocked", "needsAccount", "failed", "uncertain", "notice", "cancelPending"].includes(entry.status)).length;
   toolbar.update(client.state, connecting, attention + (saveRecoveryError ? 1 : 0));
 }
 function publish() {
@@ -62,6 +73,7 @@ client.onStateChange((state) => {
   if (state !== State.Unlocked) {
     clearCaches();
     recentFills.clear();
+    lastFillByTab.clear();
     for (const operation of operations.values()) operation.abort(new Error("session changed"));
   }
   publish();
@@ -122,7 +134,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 function senderTarget(sender, documentKey) {
   const context = usablePage(sender.url);
-  if (!context || sender.tab?.id == null || !Number.isInteger(sender.frameId) || !sender.documentId || typeof documentKey !== "string") {
+  if (!context || !usablePage(sender.tab?.url) || sender.tab?.id == null || !Number.isInteger(sender.frameId) || !sender.documentId || typeof documentKey !== "string") {
     throw new Error("unavailable frame URL");
   }
   return { tabId: sender.tab.id, frameId: sender.frameId, documentId: sender.documentId, documentKey,
@@ -131,7 +143,10 @@ function senderTarget(sender, documentKey) {
 function rememberFrame(target) {
   const key = frameKey(target.tabId, target.frameId);
   const previous = frames.get(key);
-  if (previous && previous.documentId !== target.documentId) cancelDocument(previous.documentId);
+  if (previous && previous.documentId !== target.documentId) {
+    cancelDocument(previous.documentId);
+    if (target.frameId === 0 || lastFillByTab.get(target.tabId)?.documentId === previous.documentId) lastFillByTab.delete(target.tabId);
+  }
   frames.set(key, target);
 }
 async function sendToDocument(target, message) {
@@ -153,6 +168,14 @@ async function captureTopTarget(tab) {
   }
   return { ...frame };
 }
+async function focusedFrame(tab, context) {
+  const frame = lastFocusByTab.get(tab.id);
+  if (frame?.topOrigin === context.origin) {
+    const description = await sendToDocument(frame, { type: "describeFrame" }).catch(() => null);
+    if (description?.ok && description.documentKey === frame.documentKey) return frame;
+  }
+  return captureTopTarget(tab).catch(() => null);
+}
 function ticketFor(target) {
   for (const [id, value] of uiTargets) if (Date.now() - value.at > 180000) uiTargets.delete(id);
   const id = crypto.randomUUID();
@@ -169,8 +192,8 @@ async function validateUiTarget(id) {
   if (!response?.ok) throw new Error("page document changed");
   return target;
 }
-async function performFill(target, username, requestId) {
-  if (typeof username !== "string" || typeof requestId !== "string") throw new Error("invalid fill message");
+async function performFill(target, username, { requestId, stage }) {
+  if (typeof username !== "string" || typeof requestId !== "string" || !["username", "password"].includes(stage)) throw new Error("invalid fill message");
   const key = operationKey(target.documentId, requestId);
   if (operations.has(key)) throw new Error("duplicate fill request");
   const controller = new AbortController();
@@ -179,22 +202,27 @@ async function performFill(target, username, requestId) {
   const epoch = client.epoch;
   try {
     if (!client.ready) throw new Error("not unlocked");
-    const cacheKey = credentialKey(target.origin, username);
-    let credential = passwordCache.get(cacheKey);
-    if (!credential) {
-      credential = await client.getPasswordForLoginName(target.tabId, target.frameUrl, { username }, { signal: controller.signal, frameId: target.frameId });
-      if (!credential) return { ok: false, errorKey: "fillFailed", filled: false };
-      if (credential.username !== username || !client.ready || epoch !== client.epoch || controller.signal.aborted) throw new Error("session changed");
-      passwordCache.set(cacheKey, credential, generation);
+    const fill = { type: "fill", requestId, stage, expectedOrigin: target.origin, username };
+    let recent;
+    if (stage === "password") {
+      const cacheKey = credentialKey(target.origin, username);
+      let credential = passwordCache.get(cacheKey);
+      if (!credential) {
+        credential = await client.getPasswordForLoginName(target.tabId, target.frameUrl, { username }, { signal: controller.signal, frameId: target.frameId });
+        if (!credential) return { ok: false, errorKey: "fillFailed", filled: false };
+        if (credential.username !== username || !client.ready || epoch !== client.epoch || controller.signal.aborted) throw new Error("session changed");
+        passwordCache.set(cacheKey, credential, generation);
+      }
+      if (!client.ready || generation !== passwordCache.generation || controller.signal.aborted) throw new Error("session changed");
+      fill.password = credential.password;
+      // Install before sending: a page can submit synchronously during fill.
+      recent = { username, digest: digest(fill.password), at: Date.now() };
+      recentFills.set(target.documentId, recent);
     }
-    if (!client.ready || generation !== passwordCache.generation || controller.signal.aborted) throw new Error("session changed");
-    const recent = { username, digest: digest(credential.password), at: Date.now() };
-    recentFills.set(target.documentId, recent);
-    // Install the digest record before sending: page handlers can submit synchronously during fill.
-    const response = await sendToDocument(target, { type: "fill", requestId, expectedOrigin: target.origin,
-      username: credential.username, password: credential.password });
-    if (!response?.filled && recentFills.get(target.documentId) === recent) recentFills.delete(target.documentId);
-    if (response?.filled) {
+    const response = await sendToDocument(target, fill);
+    if (recent && !response?.filled && recentFills.get(target.documentId) === recent) recentFills.delete(target.documentId);
+    if (response?.filled && client.ready && epoch === client.epoch && !controller.signal.aborted &&
+        frames.get(frameKey(target.tabId, target.frameId))?.documentId === target.documentId) {
       recordMru(target.origin, username);
       lastFillByTab.set(target.tabId, { ...target, username, at: Date.now() });
     }
@@ -203,22 +231,86 @@ async function performFill(target, username, requestId) {
   } finally { operations.delete(key); }
 }
 
+function notifySaveStatus(entry) {
+  publish();
+  if (!entry.manual && entry.status !== "expired") sendToDocument(entry.target, { type: "saveStatus", messageKey: entry.messageKey }).catch(() => {});
+}
 function setSaveStatus(entry, status, messageKey) {
   entry.status = status; entry.messageKey = messageKey;
-  persistSaves().catch(() => {});
-  publish();
-  sendToDocument(entry.target, { type: "saveStatus", messageKey }).catch(() => {});
+  entry.revision = (entry.revision || 0) + 1;
+  const stored = persistSaves();
+  stored.catch(() => {}); // Best effort unless the caller awaits the write.
+  notifySaveStatus(entry);
+  return stored;
 }
-async function persistSaves() {
-  try { await saveStore.save([...pendingSaves.values()]); saveStorageError = false; }
-  catch (error) { saveStorageError = true; throw error; }
+async function persistSaves(getEntries = () => [...pendingSaves.values()].filter(e => e.status), didStore) {
+  // Reading session storage alone doesn't mean we know which entries to restore.
+  try {
+    if (!savesRecovered) throw new Error("save queue recovery incomplete");
+    await saveStore.save(getEntries, didStore);
+  } catch (error) {
+    if (error?.errorKey) throw error;
+    throw Object.assign(new Error("save storage failed", { cause: error }), { errorKey: "saveStorageFailed" });
+  }
 }
+// Admission and confirmation are write-before-publish transitions. Until session storage
+// accepts this snapshot, other writers and flushes see only the previous state.
+function commitSaveChange(entry, patch) {
+  if (entry.commitTask) return entry.commitTask;
+  const { status, revision } = entry;
+  function checkCurrent() {
+    if (pendingSaves.get(entry.id) !== entry || entry.status !== status || entry.revision !== revision || !stillPending(entry)) {
+      const key = entry.status === "expired" ? entry.messageKey : entry.status === "cancelPending" ? "saveCancelled" :
+        !entry.manual && !pendingSaves.has(entry.id) ? "saveAutomaticOff" :
+        entry.draftTask ? "saveDraftUpdating" : "errorOperation";
+      throw Object.assign(new Error("save request changed"), { errorKey: key });
+    }
+  }
+  entry.commitTask = persistSaves(() => {
+    checkCurrent();
+    return [...pendingSaves.values()].map(e => e === entry ? { ...e, ...patch } : e).filter(e => e.status);
+  }, () => {
+    checkCurrent(); // Cancellation, expiration or a draft edit can win during storage.set.
+    if (patch.id && patch.id !== entry.id) {
+      // Replace the review row only after the combined snapshot was accepted.
+      // Old popup buttons must not confirm a newly generated password.
+      pendingSaves.delete(entry.id);
+      pendingSaves.set(patch.id, entry);
+      clearTimeout(entry.timer);
+      entry.timer = setTimeout(() => expireSave(entry), Math.max(0, patch.expiresAt - Date.now()));
+    }
+    Object.assign(entry, patch);
+    notifySaveStatus(entry);
+  }).finally(() => { delete entry.commitTask; });
+  return entry.commitTask;
+}
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== "local" || !changes.automaticSave) return;
+  savePreferenceVersion++;
+  if (changes.automaticSave.newValue === true) return;
+  let removed = false;
+  for (const entry of pendingSaves.values()) {
+    if (entry.manual || entry.status === "cancelPending") continue;
+    clearTimeout(entry.timer); clearTimeout(entry.retryTimer);
+    entry.password = "";
+    entry.controller?.abort(new Error("automatic saving disabled"));
+    pendingSaves.delete(entry.id);
+    removed = true;
+  }
+  if (removed) { persistSaves().catch(() => {}); publish(); }
+});
 function makeRoomForSave() {
   while (pendingSaves.size >= 10) {
     const terminal = [...pendingSaves.values()].find((entry) => !entry.password && entry.status !== "cancelPending");
     if (!terminal) throw new Error("save queue full");
     clearTimeout(terminal.timer); pendingSaves.delete(terminal.id);
   }
+}
+function expiryMessage(entry) {
+  return entry.priorDeliveryUnknown || ["saving", "uncertain"].includes(entry.status) ? "saveExpiredUncertain" : "saveExpired";
+}
+function expireSave(entry) {
+  discardSecret(entry, "expired", expiryMessage(entry));
 }
 function discardSecret(entry, status, messageKey) {
   clearTimeout(entry.timer); clearTimeout(entry.retryTimer);
@@ -228,7 +320,7 @@ function discardSecret(entry, status, messageKey) {
 }
 function stillPending(entry) {
   if (!entry.password || entry.status === "cancelPending" || entry.status === "cancelled" || entry.status === "expired") return false;
-  if (Date.now() >= entry.expiresAt) { discardSecret(entry, "expired", "saveExpired"); return false; }
+  if (Date.now() >= entry.expiresAt) { expireSave(entry); return false; }
   return true;
 }
 function completeCancellation(entry) {
@@ -239,14 +331,12 @@ function completeCancellation(entry) {
   entry.password = "";
   entry.controller?.abort(new Error("save cancelled")); entry.controller = null;
   entry.status = "cancelPending"; entry.messageKey = "saveCancelling";
-  delete entry.recoveryStatus;
-  delete entry.recoveryMessageKey;
   publish();
   entry.cancelTask = (async () => {
     try { await persistSaves(); }
     catch {
       entry.messageKey = "saveCancelFailed"; publish();
-      sendToDocument(entry.target, { type: "saveStatus", messageKey: "saveCancelFailed" }).catch(() => {});
+      if (!entry.manual) sendToDocument(entry.target, { type: "saveStatus", messageKey: "saveCancelFailed" }).catch(() => {});
       entry.cancelAttempts = (entry.cancelAttempts || 0) + 1;
       entry.cancelRetryTimer = setTimeout(() => {
         if (pendingSaves.get(entry.id) === entry) completeCancellation(entry);
@@ -263,7 +353,51 @@ function completeCancellation(entry) {
   })().finally(() => { entry.cancelTask = null; });
   return entry.cancelTask;
 }
-async function queueSave(message, target) {
+const editableDraft = entry => ["review", "blocked", "needsAccount"].includes(entry.status) ||
+  (entry.status === null && entry.admittingReview);
+function findDraft(draftId, target) {
+  return typeof draftId === "string" && draftId && [...pendingSaves.values()].find(entry => !entry.manual &&
+    entry.draftId === draftId && entry.target.documentId === target.documentId &&
+    entry.target.documentKey === target.documentKey && editableDraft(entry));
+}
+async function updateSaveDraft(message, target) {
+  if (!savesRecovered) return { ok: false, errorKey: "saveStorageFailed" };
+  const entry = findDraft(message.draftId, target);
+  if (!entry || !stillPending(entry)) return { ok: false, inactive: true };
+  const c = message.credential;
+  if (c?.password && (typeof c.password !== "string" || typeof c.username !== "string")) throw new Error("invalid draft");
+  const needsAccount = c?.needsAccount || !c?.username;
+  const patch = !c?.password || c.errorKey ? { status: "blocked",
+    messageKey: c?.errorKey === "errorChooseField" ? "errorChooseField" : "errorPasswordConfirmation" } :
+    { password: c.password, username: c.username, status: needsAccount ? "needsAccount" : "review",
+      messageKey: needsAccount ? "saveNoAccount" : "saveReview" };
+  return changeDraft(entry, patch);
+}
+async function changeDraft(entry, patch) {
+  // Wait for admission and earlier edits. Invalidate an in-flight confirmation of the old value.
+  const previous = entry.draftTask || entry.commitTask;
+  if (!entry.draftTask && entry.commitTask && entry.status !== null) entry.revision = (entry.revision || 0) + 1;
+  const task = (async () => {
+    if (previous) {
+      try { await previous; } catch (error) { if (entry.status === null) throw error; }
+    }
+    if (pendingSaves.get(entry.id) !== entry || !editableDraft(entry) || !stillPending(entry)) return { ok: false, inactive: true };
+    try { await commitSaveChange(entry, patch); }
+    catch (error) {
+      if (patch.id && error.errorKey === "saveStorageFailed" && pendingSaves.get(entry.id) === entry && editableDraft(entry)) {
+        throw Object.assign(new Error("draft replacement not stored"), { errorKey: "saveReplacementFailed" });
+      }
+      if (error.errorKey === "saveStorageFailed" && pendingSaves.get(entry.id) === entry && editableDraft(entry)) {
+        await setSaveStatus(entry, "blocked", "saveStorageFailed").catch(() => {});
+      }
+      throw error;
+    }
+    return { ok: true };
+  })();
+  entry.draftTask = task;
+  try { return await task; } finally { if (entry.draftTask === task) delete entry.draftTask; }
+}
+async function queueSave(message, target, manual = false) {
   if (typeof message.password !== "string" || !message.password || typeof message.username !== "string") throw new Error("invalid save message");
   const reviewError = message.review && ["errorPasswordConfirmation", "errorChooseField"].includes(message.errorKey) ? message.errorKey : null;
   if (message.review && message.errorKey && !reviewError) throw new Error("invalid review error");
@@ -271,35 +405,50 @@ async function queueSave(message, target) {
     (message.newPwCtx ? "new" : "login");
   if (typeof message.submissionId !== "string" || !message.submissionId) throw new Error("invalid submission id");
   const sameDocument = (entry) => entry.target.documentId === target.documentId && entry.target.documentKey === target.documentKey;
-  const existing = [...pendingSaves.values()].find((entry) => sameDocument(entry) && entry.submissionId === message.submissionId);
+  const existing = [...pendingSaves.values()].find((entry) => sameDocument(entry) &&
+    (entry.submissionId === message.submissionId || (manual && entry.manual &&
+      [null, "review", "needsAccount"].includes(entry.status) && Date.now() < entry.expiresAt &&
+      entry.username === message.username && entry.password === message.password && entry.saveKind === saveKind)));
   if (existing) {
-    try { await persistSaves(); }
+    try { await (existing.commitTask || persistSaves()); }
     catch { return { ok: false, errorKey: "saveStorageFailed", saveId: existing.id }; }
     return { ok: true, saveId: existing.id, status: existing.status };
   }
-  const draft = message.draftId && [...pendingSaves.values()].find((entry) => sameDocument(entry) && entry.draftId === message.draftId && ["review", "blocked", "needsAccount"].includes(entry.status));
-  if (draft) { clearTimeout(draft.timer); draft.password = ""; pendingSaves.delete(draft.id); }
-  makeRoomForSave();
+  const draft = findDraft(message.draftId, target);
+  if (!draft) makeRoomForSave();
   const entry = { id: crypto.randomUUID(), target, host: new URL(target.frameUrl).host,
-    username: message.username, password: message.password, saveKind,
+    username: message.username, password: message.password, saveKind, manual,
     submissionId: message.submissionId, draftId: message.draftId, expiresAt: Date.now() + SAVE_TTL,
-    status: "queued", attempts: 0, controller: null };
-  entry.timer = setTimeout(() => discardSecret(entry, "expired", "saveExpired"), SAVE_TTL);
-  pendingSaves.set(entry.id, entry);
-  const status = reviewError ? "blocked" : message.needsAccount || (message.review && !entry.username) ? "needsAccount" : message.review ? "review" : "queued";
-  const messageKey = reviewError || (status === "needsAccount" ? "saveNoAccount" : status === "review" ? "saveReview" : client.ready ? "saveQueued" : "saveWaitingUnlock");
-  if (!savesRecovered) { entry.recoveryStatus = status; entry.recoveryMessageKey = messageKey; }
-  setSaveStatus(entry, status, messageKey);
-  // Acknowledge only after the in-memory browser session copy is available.
-  try { await persistSaves(); }
-  catch { setSaveStatus(entry, "failed", "saveStorageFailed"); return { ok: false, errorKey: "saveStorageFailed", saveId: entry.id }; }
+    status: null, admittingReview: !!message.review, attempts: 0, controller: null }; // reserve capacity, but not yet visible or sendable
+  const needsAccount = message.needsAccount || (message.review && !manual && !entry.username);
+  const status = reviewError ? "blocked" : needsAccount ? "needsAccount" : message.review ? "review" : "queued";
+  const messageKey = reviewError || (status === "needsAccount" ? "saveNoAccount" : status === "review" ?
+    (manual ? "saveManualReview" : "saveReview") : client.ready ? "saveQueued" : "saveWaitingUnlock");
+  try {
+    if (draft) {
+      const replaced = await changeDraft(draft, { id: entry.id, username: entry.username, password: entry.password,
+        submissionId: entry.submissionId, expiresAt: entry.expiresAt, saveKind, status, messageKey });
+      if (!replaced.ok) return { ok: false, errorKey: "saveDraftUpdating" };
+    } else {
+      entry.timer = setTimeout(() => expireSave(entry), SAVE_TTL);
+      pendingSaves.set(entry.id, entry);
+      await commitSaveChange(entry, { status, messageKey });
+    }
+  } catch (error) {
+    if (pendingSaves.get(entry.id) === entry && entry.status === null) {
+      if (message.review) { clearTimeout(entry.timer); entry.password = ""; pendingSaves.delete(entry.id); publish(); }
+      else setSaveStatus(entry, "failed", "saveStorageFailed");
+    }
+    return { ok: false, errorKey: error.errorKey || "saveStorageFailed", saveId: entry.id };
+  }
+  if (pendingSaves.get(entry.id) !== (draft || entry)) return { ok: false, errorKey: draft ? "saveDraftUpdating" : "saveAutomaticOff" };
   // Open the existing unlock/save UI while the user's submit is still recent.
   // Older browsers may refuse openPopup; the persistent badge remains actionable.
   if (!message.review && !client.ready && chrome.action?.openPopup) {
     try { Promise.resolve(chrome.action.openPopup()).catch(() => {}); } catch {}
   }
   queueMicrotask(flushPendingSaves);
-  return { ok: true, saveId: entry.id, status: entry.status };
+  return { ok: true, saveId: entry.id, status: (draft || entry).status };
 }
 async function flushPendingSaves() {
   if (!await recoverPendingSaves()) return;
@@ -330,9 +479,8 @@ async function flushPendingSaves() {
         }
         entry.controller = new AbortController();
         entry.attempts++;
-        setSaveStatus(entry, "saving", "saveSending");
         // Recovery of this state is uncertain, never an automatic duplicate post.
-        await persistSaves();
+        await setSaveStatus(entry, "saving", "saveSending");
         if (!stillPending(entry)) continue;
         // maybeAdd lets Apple's own sheet compare an existing account and confirm updates.
         // Do not read the password (and request Touch ID) just to suppress a save prompt.
@@ -351,7 +499,7 @@ async function flushPendingSaves() {
         entry.controller = null;
         console.warn("[FAPassword] deferred save failed");
         if (error.mayHaveBeenSent) setSaveStatus(entry, "uncertain", "saveUncertain");
-        else if (saveStorageError) setSaveStatus(entry, "failed", "saveStorageFailed");
+        else if (error.errorKey === "saveStorageFailed") setSaveStatus(entry, "failed", "saveStorageFailed");
         else {
           setSaveStatus(entry, "failed", "saveFailed");
           if (entry.attempts < 3) entry.retryTimer = setTimeout(() => {
@@ -371,13 +519,18 @@ function recoverPendingSaves() {
   if (savesRecovered) return Promise.resolve(true);
   if (saveRecoveryAttempt) return saveRecoveryAttempt;
   saveRecoveryAttempt = (async () => {
-    let recovered;
-    try { recovered = await saveStore.load(); }
-    catch {
-      saveStorageError = true; saveRecoveryError = "saveStorageFailed"; publish();
+    let recovered, automatic;
+    try {
+      recovered = await saveStore.load();
+      automatic = recovered.some(saved => saved?.manual !== true) && await readAutomaticSaveSetting();
+    } catch {
+      saveRecoveryError = "saveStorageFailed"; publish();
       return false;
     }
     for (const saved of recovered) {
+      // Older versions treated site submissions as save requests. Do not restore
+      // those requests when the user has not enabled automatic saving.
+      if (saved?.manual !== true && !automatic) continue;
       if (typeof saved?.id !== "string" || typeof saved.username !== "string" || typeof saved.password !== "string" ||
         !saved.target || !usablePage(saved.target.frameUrl) || !Number.isFinite(saved.expiresAt)) continue;
       const local = pendingSaves.get(saved.id) || [...pendingSaves.values()].find((entry) =>
@@ -395,7 +548,7 @@ function recoverPendingSaves() {
       if (["cancelPending", "cancelled"].includes(entry.status)) {
         entry.password = ""; entry.status = "cancelPending"; entry.messageKey = "saveCancelling";
       } else if (entry.password && Date.now() >= entry.expiresAt) {
-        entry.password = ""; entry.status = "expired"; entry.messageKey = "saveExpired";
+        entry.messageKey = expiryMessage(entry); entry.password = ""; entry.status = "expired";
       } else if (entry.status === "saving") { entry.status = "uncertain"; entry.messageKey = "saveUncertain"; }
       else if (entry.status === "queued") {
         // A former worker may have accepted a cancellation that could not be
@@ -404,20 +557,10 @@ function recoverPendingSaves() {
         entry.status = entry.username ? "review" : "needsAccount";
         entry.messageKey = entry.username ? "saveRecoveredReview" : "saveNoAccount";
       }
-      if (entry.password) entry.timer = setTimeout(() => discardSecret(entry, "expired", "saveExpired"), entry.expiresAt - Date.now());
+      if (entry.password) entry.timer = setTimeout(() => expireSave(entry), entry.expiresAt - Date.now());
       pendingSaves.set(entry.id, entry);
     }
     savesRecovered = true; saveRecoveryError = null;
-    for (const entry of pendingSaves.values()) {
-      if (!entry.recoveryStatus) continue;
-      if (stillPending(entry)) {
-        entry.status = entry.recoveryStatus;
-        entry.messageKey = entry.recoveryMessageKey || (entry.status === "needsAccount" ? "saveNoAccount" : entry.status === "review" ? "saveReview" :
-          client.ready ? "saveQueued" : "saveWaitingUnlock");
-      }
-      delete entry.recoveryStatus;
-      delete entry.recoveryMessageKey;
-    }
     // This is a merge, never an overwrite of an unread snapshot. A failed merge
     // write still cannot send: flush persists each saving state before posting.
     await persistSaves().catch(() => {}); publish();
@@ -444,6 +587,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         const current = frames.get(frameKey(target.tabId, target.frameId));
         if (current && current.documentId !== target.documentId) throw new Error("stale document");
         rememberFrame(target);
+      }
+      if (["resolveSave", "updateSaveDraft", "saveNotice"].includes(message.type)) {
+        if (!fromContent) return respond({ ok: false, errorKey: "saveAutomaticOff" });
+        let automatic;
+        try { automatic = await readAutomaticSaveSetting(); }
+        catch { return respond({ ok: false, errorKey: "saveStorageFailed" }); }
+        if (!automatic) return respond({ ok: false, errorKey: "saveAutomaticOff" });
       }
       switch (message.type) {
         case "getPasswordsLauncher":
@@ -473,29 +623,34 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
             { ok: true, locked: true, logins: [] } : { ok: false, errorKey: lastConnectionError || "errorConnection" });
           return respond({ ok: true, locked: false, logins: orderLogins(target.origin, await getLoginNames(target.tabId, target.frameUrl, target.frameId)) });
         case "inlineFill":
-          return respond(await performFill(target, message.loginName?.username, message.requestId));
+          return respond(await performFill(target, message.loginName?.username, message));
         case "cancelFill":
           operations.get(operationKey(target.documentId, message.requestId))?.abort(new Error("fill cancelled"));
           return respond({ ok: true });
         case "resolveSave":
           return respond(await queueSave(message, target));
-        case "updateSaveDraft": {
-          const entry = [...pendingSaves.values()].find((entry) => entry.draftId === message.draftId &&
-            entry.target.documentId === target.documentId && entry.target.documentKey === target.documentKey &&
-            ["review", "blocked", "needsAccount"].includes(entry.status));
-          if (!entry || !stillPending(entry)) return respond({ ok: true });
-          const credential = message.credential;
-          if (!credential || credential.errorKey || !credential.password) {
-            setSaveStatus(entry, "blocked", credential?.errorKey === "errorChooseField" ? "errorChooseField" : "errorPasswordConfirmation");
-          } else {
-            if (typeof credential.password !== "string" || typeof credential.username !== "string") throw new Error("invalid draft");
-            entry.password = credential.password; entry.username = credential.username;
-            setSaveStatus(entry, credential.needsAccount || !entry.username ? "needsAccount" : "review", credential.needsAccount || !entry.username ? "saveNoAccount" : "saveReview");
+        case "reviewPagePassword": {
+          if (!savesRecovered) return respond({ ok: false, errorKey: "saveStorageFailed" });
+          const tab = await activeTab();
+          const context = usablePage(tab?.url);
+          if (tab?.id == null || !context) return respond({ ok: false, errorKey: unavailablePageKey(tab?.url) });
+          const frame = await focusedFrame(tab, context);
+          if (!frame) return respond({ ok: false, errorKey: "pageUnavailable" });
+          const result = await sendToDocument(frame, { type: "readPagePassword" });
+          if (!result?.ok) return respond({ ok: false, errorKey: result?.errorKey || "saveNoPasswordOnPage" });
+          const description = await sendToDocument(frame, { type: "describeFrame" });
+          const current = await activeTab();
+          if (current?.id !== tab.id || current.url !== tab.url || !description?.ok ||
+              description.documentKey !== frame.documentKey) {
+            return respond({ ok: false, errorKey: "errorPageChanged" });
           }
-          await persistSaves(); return respond({ ok: true });
+          const queued = await queueSave({ ...result.credential, review: true, submissionId: crypto.randomUUID() }, frame, true);
+          return respond({ ...queued, saves: publicSaves() });
         }
+        case "updateSaveDraft":
+          return respond(await updateSaveDraft(message, target));
         case "saveNotice": {
-          const allowed = ["errorChooseField", "errorPasswordConfirmation", "saveFailed", "saveStorageFailed", "saveQueueFull", "errorConnection"];
+          const allowed = ["errorChooseField", "errorPasswordConfirmation", "saveFailed", "saveStorageFailed", "saveReplacementFailed", "saveQueueFull", "errorConnection"];
           if (!allowed.includes(message.messageKey)) throw new Error("invalid save notice");
           const previous = [...pendingSaves.values()].find((entry) => entry.target.documentId === target.documentId && entry.submissionId === message.submissionId);
           if (previous) return respond({ ok: true });
@@ -533,13 +688,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         case "getLogins": {
           const tab = await activeTab();
           const context = usablePage(tab?.url);
-          if (!tab?.id || !context) return respond({ ok: false, errorKey: "pageUnavailable" });
-          let frame = lastFocusByTab.get(tab?.id);
-          if (frame && frame.topOrigin === context.origin) {
-            const description = await sendToDocument(frame, { type: "describeFrame" }).catch(() => null);
-            if (!description?.ok) frame = null;
-          } else frame = null;
-          frame ||= await captureTopTarget(tab).catch(() => null);
+          if (!tab?.id || !context) return respond({ ok: false, errorKey: unavailablePageKey(tab?.url) });
+          const frame = await focusedFrame(tab, context);
           // Listing accounts needs a site, not an editable field or a content script.
           // A missing document disables filling; actual fills still validate their ticket.
           const url = frame?.frameUrl || tab.url;
@@ -549,14 +699,17 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           if (currentTab?.id !== tab.id || pageContext(currentTab.url)?.origin !== context.origin) {
             return respond({ ok: false, errorKey: "pageUnavailable" });
           }
+          const previous = lastFillByTab.get(tab.id);
+          const canRefill = frame && previous && previous.topOrigin === context.origin && previous.frameId === frame.frameId &&
+            previous.documentId === frame.documentId && previous.documentKey === frame.documentKey;
           return respond({ ok: true, logins, targetId: frame ? ticketFor(frame) : null, host: new URL(url).hostname,
-            refill: lastFillByTab.get(tab.id) ? { username: lastFillByTab.get(tab.id).username, host: new URL(lastFillByTab.get(tab.id).frameUrl).hostname } : null });
+            refill: canRefill ? { username: previous.username, host: new URL(previous.frameUrl).hostname } : null });
         }
         case "fillOnPage": {
           const frame = await validateUiTarget(message.targetId);
           const preparation = await sendToDocument(frame, { type: "prepareFill" });
           if (!preparation?.ok) return respond(preparation || { ok: false, errorKey: "errorPageChanged" });
-          return respond(await performFill(frame, message.loginName?.username, preparation.requestId));
+          return respond(await performFill(frame, message.loginName?.username, preparation));
         }
         case "refreshLogins":
           clearCaches(); return respond({ ok: true });
@@ -566,18 +719,29 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           if (!previous || previous.topOrigin !== pageContext(tab?.url)?.origin) throw new Error("stale page target");
           const preparation = await sendToDocument(previous, { type: "prepareFill" });
           if (!preparation?.ok) return respond(preparation || { ok: false, errorKey: "errorPageChanged" });
-          clearCaches();
-          return respond(await performFill(previous, previous.username, preparation.requestId));
+          if (preparation.stage === "password") clearCaches();
+          return respond(await performFill(previous, previous.username, preparation));
         }
         case "retrySave": {
           const entry = pendingSaves.get(message.saveId);
           if (!entry || !stillPending(entry) || entry.status === "saving" || entry.status === "blocked" || entry.status === "cancelPending") throw new Error("save expired");
-          if (entry.status === "needsAccount") {
-            if (typeof message.username !== "string" || !message.username.trim()) throw new Error("no account selected");
-            entry.username = message.username;
+          if (entry.draftTask) return respond({ ok: false, errorKey: "saveDraftUpdating", saves: publicSaves() });
+          if (entry.status === null) throw new Error("save not admitted");
+          let username = entry.username;
+          if (entry.status === "needsAccount" || (entry.manual && entry.status === "review")) {
+            username = typeof message.username === "string" ? message.username : entry.username;
+            if (!username.trim() && (entry.status === "needsAccount" || !client.capabilities?.canSaveAccountWithEmptyUserName)) {
+              return respond({ ok: false, errorKey: "saveAccountRequired" });
+            }
+            if (!username.trim()) username = "";
           }
           clearTimeout(entry.retryTimer);
-          setSaveStatus(entry, "queued", "saveQueued"); await persistSaves(); queueMicrotask(flushPendingSaves);
+          if (entry.status !== "queued") {
+            try { await commitSaveChange(entry, { username, status: "queued", messageKey: "saveQueued",
+              priorDeliveryUnknown: entry.status === "uncertain" || !!entry.priorDeliveryUnknown }); }
+            catch (error) { return respond({ ok: false, errorKey: error.errorKey || "saveStorageFailed", saves: publicSaves() }); }
+          }
+          queueMicrotask(flushPendingSaves);
           return respond({ ok: true, saves: publicSaves() });
         }
         case "cancelSave": {

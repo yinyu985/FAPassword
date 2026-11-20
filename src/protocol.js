@@ -5,6 +5,7 @@
 // ported from au2001/icloud-passwords-firefox (Apache-2.0). see NOTICE
 
 import { SRPSession, SecretSessionVersion, MSGType } from "./srp.js";
+import { nativeHostUnavailable } from "./shared.js";
 import {
   bytesToBase64,
   base64ToBytes,
@@ -243,7 +244,7 @@ export class ApplePasswords {
       try {
         port = chrome.runtime.connectNative(NATIVE_HOST);
       } catch (e) {
-        this._setState(State.NoHelper);
+        this._setState(nativeHostUnavailable(e.message) ? State.NoHelper : State.Disconnected);
         return reject(e);
       }
       this.port = port;
@@ -251,7 +252,7 @@ export class ApplePasswords {
       port.onMessage.addListener((msg) => this._dispatch(msg, port));
       port.onDisconnect.addListener(() => {
         const message = chrome.runtime.lastError?.message || "native helper disconnected";
-        const state = /not found|forbidden|host/i.test(message) ? State.NoHelper : State.Disconnected;
+        const state = nativeHostUnavailable(message) ? State.NoHelper : State.Disconnected;
         this._dropConnection(port, state, new Error(message));
       });
 

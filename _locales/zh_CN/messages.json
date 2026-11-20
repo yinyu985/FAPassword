@@ -69,7 +69,7 @@
     "message": "此浏览器无法打开 Apple 密码设置。"
   },
   "refreshPasswords": {
-    "message": "刷新密码"
+    "message": "刷新账号列表"
   },
   "refreshingLogins": {
     "message": "正在刷新账号…"
@@ -152,6 +152,7 @@
   "autofillRefused": {
     "message": "操作受限，请检查自动填充设置"
   },
+  "httpPageUnavailable": { "message": "此 HTTP 页面不支持填充或保存密码。如果网站支持 HTTPS，请改用 HTTPS。" },
   "pageUnavailable": {
     "message": "FAPassword 无法在此页面运行。"
   },
@@ -288,6 +289,16 @@
   "errorPasswordConfirmation": {
     "message": "新密码与确认密码不一致，尚未发起保存。"
   },
+  "extensionSettings": { "message": "设置" },
+  "automaticSave": { "message": "自动发起密码保存请求" },
+  "retrySetting": { "message": "重新读取设置" },
+  "settingReadFailed": { "message": "无法读取自动保存设置。请重试以确认是否开启。" },
+  "settingWriteFailed": { "message": "未能保存你的选择，浏览器设置未更改。请重试。" },
+  "automaticSaveNote": { "message": "提交网页表单时可能读取密码，并提示解锁。" },
+  "savePagePassword": { "message": "保存此页面的密码" },
+  "saveNoPasswordOnPage": { "message": "请在网页填写密码，并在提交表单前点此按钮。若表单已关闭，也可打开 Apple 密码手动添加。" },
+  "saveAutomaticOff": { "message": "自动保存密码已关闭。" },
+  "saveManualReview": { "message": "请核对网站和账号，再保存到 Apple 密码。" },
   "saveQueued": {
     "message": "等待发送保存请求。"
   },
@@ -306,8 +317,18 @@
   "saveFailed": {
     "message": "保存请求失败，请在过期前重试，或取消请求。"
   },
+  "saveExpiredUncertain": {
+    "message": "暂存密码已过期并清除。上次请求可能已送达 Apple，请先检查 Apple 密码，再决定是否重新保存。"
+  },
+  "languageLabel": { "message": "语言" },
+  "languageAutomatic": { "message": "跟随浏览器" },
+  "languageWriteFailed": { "message": "语言设置未保存，请重试。" },
+  "saveReplacementFailed": { "message": "新密码未暂存，弹窗里保留的是上一次的草稿。请保持页面打开，再试一次。" },
+  "saveDraftUpdating": {
+    "message": "草稿已变化，请核对更新后的账号，再确认保存。"
+  },
   "saveExpired": {
-    "message": "请求已过期，暂存密码已清除；若尚未保存，请重新提交。"
+    "message": "请求完成前，暂存密码已清除。如果仍想保存，请重新发起保存。"
   },
   "saveCancelled": {
     "message": "待处理请求已取消；如 Mac 上仍有确认提示，请另行关闭。"
@@ -320,7 +341,9 @@
   },
   "saveReview": { "message": "生成密码已暂存 3 分钟。提交表单后自动处理，也可在这里确认保存。" },
   "saveConfirm": { "message": "确认保存" },
-  "saveAccountPlaceholder": { "message": "账号 / 邮箱 / 手机号" },
+  "saveAccountLabel": { "message": "账号" },
+  "saveAccountOptional": { "message": "账号（可留空）" },
+  "saveAccountRequired": { "message": "请填写账号；此保存请求不能使用空账号。" },
   "saveStorageFailed": { "message": "保存请求无法跨后台重启保留。请保持页面打开并重试。" },
   "saveRecoveredReview": { "message": "后台重启后恢复的请求。请核对账号并再次确认保存。" },
   "saveCancelling": { "message": "正在记录取消操作；取消处理期间不会发送该请求。" },

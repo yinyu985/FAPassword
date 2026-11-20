@@ -69,7 +69,7 @@
     "message": "Could not open Apple Passwords settings from this browser."
   },
   "refreshPasswords": {
-    "message": "Refresh passwords"
+    "message": "Refresh accounts"
   },
   "refreshingLogins": {
     "message": "Refreshing accounts…"
@@ -152,6 +152,7 @@
   "autofillRefused": {
     "message": "Blocked; check autofill settings"
   },
+  "httpPageUnavailable": { "message": "Filling and saving are off on this HTTP page. Use HTTPS if the site supports it." },
   "pageUnavailable": {
     "message": "FAPassword can't run on this page."
   },
@@ -288,6 +289,16 @@
   "errorPasswordConfirmation": {
     "message": "The new password and confirmation do not match. Nothing was offered for saving."
   },
+  "extensionSettings": { "message": "Settings" },
+  "automaticSave": { "message": "Automatically request password saving" },
+  "retrySetting": { "message": "Retry reading setting" },
+  "settingReadFailed": { "message": "The automatic saving setting could not be read. Retry to check whether it is on." },
+  "settingWriteFailed": { "message": "Your choice could not be stored. The browser setting was not changed. Please try again." },
+  "automaticSaveNote": { "message": "Can capture passwords when you submit a form and prompt you to unlock." },
+  "savePagePassword": { "message": "Save password from this page" },
+  "saveNoPasswordOnPage": { "message": "Enter the password on the page and use this button before submitting. If the form is gone, you can add the entry in Apple Passwords." },
+  "saveAutomaticOff": { "message": "Automatic password saving is off." },
+  "saveManualReview": { "message": "Check the site and account before saving to Apple Passwords." },
   "saveQueued": {
     "message": "Waiting to send the save request."
   },
@@ -306,8 +317,18 @@
   "saveFailed": {
     "message": "The save request failed. Retry before it expires, or cancel it."
   },
+  "saveExpiredUncertain": {
+    "message": "The temporary password expired and was cleared. The previous request may have reached Apple. Check Apple Passwords before starting another save."
+  },
+  "languageLabel": { "message": "Language" },
+  "languageAutomatic": { "message": "Browser default" },
+  "languageWriteFailed": { "message": "Language preference not saved. Please try again." },
+  "saveReplacementFailed": { "message": "The new password was not retained. The previous draft is still in the popup. Keep the page open and try again." },
+  "saveDraftUpdating": {
+    "message": "The draft changed. Review the updated account and confirm again."
+  },
   "saveExpired": {
-    "message": "The request expired and its password was discarded. Submit again if it was not saved."
+    "message": "The temporary password was cleared before this request finished. If you still want to save it, start a new save."
   },
   "saveCancelled": {
     "message": "The pending request was cancelled. Dismiss any remaining Mac confirmation separately."
@@ -320,7 +341,9 @@
   },
   "saveReview": { "message": "Generated password retained for 3 minutes. Submit the form, or confirm saving here." },
   "saveConfirm": { "message": "Confirm saving" },
-  "saveAccountPlaceholder": { "message": "Account / email / phone" },
+  "saveAccountLabel": { "message": "Account" },
+  "saveAccountOptional": { "message": "Account (optional)" },
+  "saveAccountRequired": { "message": "Enter an account. This save requires one." },
   "saveStorageFailed": { "message": "Could not retain the save request across a background restart. Keep this page open and retry." },
   "saveRecoveredReview": { "message": "Request recovered after a background restart. Check the account and confirm saving again." },
   "saveCancelling": { "message": "Recording cancellation. This request will not be sent while cancellation is pending." },

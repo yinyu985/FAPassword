@@ -2,6 +2,10 @@
 
 ## Unreleased — audit remediation, 2026-09-07
 
+- Replace the browser harness with lightweight Node tests for credential handling. Local tests and CI do not install or launch a browser.
+- Stop before reading a password when several fields match and there is no unique target. Retain the previous generated draft if its replacement cannot be stored, and preserve delivery-unknown warnings after expiry.
+- Add a language switch under Settings for browser default, Simplified Chinese, and English. Let the toolbar popup grow with its content, with no visible scrollbar at the browser's height limit.
+- Turn automatic password saving off by default. Ordinary login and inline generation no longer create requests unless explicitly enabled in Settings. Save from the toolbar by reviewing the site and editing the account if needed. Repeated clicks reuse an unchanged pending review. Expired requests no longer show on the page or count toward the toolbar badge.
 - Fix submit/reset credential corruption, short asynchronous-submit gaps, exact component-replacement draft recovery, post-input candidate normalization, canceled username context, readonly save capture and label-only false triggers. Preserve popup account drafts and surface cancellation/recovery failures. Commit cancellation tombstones before dismissal and require reconfirmation of recovered queued snapshots. Add release-fault and UI regression suites.
 - Separate trusted native submissions from provisional clicks/keys. Exclude cancellation, Next/Continue, IME confirmation, password hints and non-submitting Enter. Retain submit-boundary/FormData credentials and scoped SPA snapshots rather than reset defaults; update generated candidates after synchronous input handlers, check all confirmation fields and preserve generated roles across attribute changes.
 - Retain inline-generated passwords as explicit review candidates and ambiguous accounts for user entry. Recover pending saves across worker termination using trusted-only browser-memory session storage with a three-minute TTL; never auto-replay uncertain in-flight sends. Surface rejected handoffs even after fields disappear.

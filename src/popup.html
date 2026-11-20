@@ -10,7 +10,7 @@
     <header>
       <img src="../icons/icon48.png" alt="" width="20" height="20" />
       <h1>FAPassword</h1>
-      <button id="refresh" class="icon" data-i18n-title="refreshPasswords" data-i18n-aria-label="refreshPasswords" title="Refresh passwords" aria-label="Refresh passwords" hidden><span class="refresh-glyph" aria-hidden="true">&#x21bb;</span></button>
+      <button id="refresh" class="icon" data-i18n-title="refreshPasswords" data-i18n-aria-label="refreshPasswords" title="Refresh accounts" aria-label="Refresh accounts" hidden><span class="refresh-glyph" aria-hidden="true">&#x21bb;</span></button>
       <span id="dot" class="dot" role="status" aria-live="polite" data-i18n-title="status" title="status"></span>
     </header>
 
@@ -41,6 +41,8 @@
         <button id="refill" class="link" hidden></button>
       </section>
       <p id="status-message" class="status-message" role="status" aria-live="polite" aria-atomic="true" data-i18n="connecting"></p>
+      <button id="save-page-password" class="action-button" aria-describedby="save-page-message" data-i18n="savePagePassword">Save password from this page</button>
+      <p id="save-page-message" class="status-message" role="status" aria-atomic="true"></p>
       <section id="pending-saves" hidden>
         <h2 data-i18n="pendingSaves">Password save requests</h2>
         <ul id="save-list" aria-live="polite"></ul>
@@ -65,9 +67,26 @@
       </div>
       <details class="settings-panel">
         <summary>
-          <span class="section-title" data-i18n="browserControls">Browser controls</span>
+          <span class="section-title" data-i18n="extensionSettings">Settings</span>
         </summary>
         <div class="settings-list">
+          <div class="switch-row language-row">
+            <span id="language-label" class="setting-copy" data-i18n="languageLabel">Language</span>
+            <fieldset id="ui-language" aria-labelledby="language-label" aria-describedby="language-note" disabled>
+              <label><input type="radio" name="ui-language" value="auto" checked /><span data-i18n="languageAutomatic">Browser default</span></label>
+              <label lang="zh-CN"><input type="radio" name="ui-language" value="zh_CN" /><span>简体中文</span></label>
+              <label lang="en"><input type="radio" name="ui-language" value="en" /><span>English</span></label>
+            </fieldset>
+          </div>
+          <p id="language-note" class="subnote" role="status"></p>
+          <label class="switch-row">
+            <span class="setting-copy"><span data-i18n="automaticSave">Automatically request password saving</span><span id="automatic-save-note" class="scope-note" role="status" data-i18n="automaticSaveNote"></span></span>
+            <span class="segmented-switch">
+              <input type="checkbox" id="automatic-save" class="switch" role="switch" aria-describedby="automatic-save-note" disabled />
+              <span class="switch-options" aria-hidden="true"><span data-i18n="on">On</span><span data-i18n="off">Off</span></span>
+            </span>
+          </label>
+          <button id="retry-automatic-save" class="link" type="button" data-i18n="retrySetting" hidden>Retry reading setting</button>
           <label id="pm-row" class="switch-row" hidden>
             <span class="setting-copy"><span data-i18n="hideSaveBubble">Hide password save prompts</span><span id="pm-note" class="subnote" role="status" aria-live="polite"></span></span>
             <span class="segmented-switch">

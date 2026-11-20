@@ -69,7 +69,7 @@ for (const source of localizedSources) {
   for (const match of source.matchAll(/data-i18n(?:-title|-aria-label)?="([A-Za-z0-9_]+)"/g)) {
     usedLocaleKeys.add(match[1]);
   }
-  for (const match of source.matchAll(/\b(?:t|tr)\(\s*"([A-Za-z0-9_]+)"/g)) usedLocaleKeys.add(match[1]);
+  for (const match of source.matchAll(/\b(?:t|tr|msg)\(\s*["']([A-Za-z0-9_]+)["']/g)) usedLocaleKeys.add(match[1]);
 }
 for (const key of usedLocaleKeys) {
   for (const [locale, messages] of locales) {

@@ -24,7 +24,9 @@
         "*://*/*"
       ],
       "js": [
+        "src/page-policy.js",
         "src/iframe-hosts.js",
+        "src/language.bundle.js",
         "src/field-policy.js",
         "src/password-generator.js",
         "src/content.js"

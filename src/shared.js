@@ -19,13 +19,9 @@ export function pageContext(value) {
   }
 }
 
-export function isLocalDevHost(host) {
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "[::1]" ||
-    host?.endsWith(".localhost")
-  );
+// Chrome distinguishes a missing/forbidden host from a host that stopped running.
+export function nativeHostUnavailable(message) {
+  return /native (?:messaging )?host.*(?:not found|forbidden|not allowed)|(?:forbidden|not allowed).*native (?:messaging )?host/i.test(message);
 }
 
 // Stable UI messages; helper diagnostics remain available to the caller for logging.
@@ -36,8 +32,8 @@ export function errorKey(error) {
   if (/challenge_reissued|new code|expired code/i.test(error?.code || message)) return "errorNewCode";
   if (/timeout|timed out/i.test(message)) return "errorTimeout";
   if (/not unlocked|invalid session|session changed/i.test(message)) return "errorLocked";
-  if (/not found|forbidden.*host|native.*host/i.test(message)) return "errorNoHelper";
-  if (/connection|disconnected|not connected/i.test(message)) return "errorConnection";
+  if (nativeHostUnavailable(message)) return "errorNoHelper";
+  if (/connection|disconnected|not connected|native (?:messaging )?host|port.*closed/i.test(message)) return "errorConnection";
   if (/page|frame|document|target|stale|superseded/i.test(message)) return "errorPageChanged";
   if (/cancel|abort/i.test(message)) return "errorCancelled";
   if (/HTTPS|URL|unavailable/i.test(message)) return "pageUnavailable";

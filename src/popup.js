@@ -2,13 +2,37 @@ import { normalizePin } from "./shared.js";
 import "./password-generator.js";
 import { preparePasswordsLaunch, PASSWORDS_HELP_URL, PASSWORDS_MODERN_SETTINGS_URL } from './passwords-launch.js';
 
-const t = (name, substitutions) => chrome.i18n.getMessage(name, substitutions) || name;
-document.documentElement.lang = chrome.i18n.getUILanguage().replace("_", "-");
-for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
-for (const el of document.querySelectorAll("[data-i18n-title]")) el.title = t(el.dataset.i18nTitle);
-for (const el of document.querySelectorAll("[data-i18n-aria-label]")) {
-  el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel));
+import './language.bundle.js';
+const language = globalThis.FAPASSWORD_LANGUAGE(chrome, renderLanguage);
+const t = language.t;
+// Keep dynamic notices as message keys, not already-translated strings.
+const msg = (key, args) => () => t(key, typeof args === 'function' ? args() : args);
+const notices = new WeakMap();
+const languageGroup = document.getElementById('ui-language');
+function syncLanguageChoice() {
+  for (const option of languageGroup.elements) option.checked = option.value === language.choice;
 }
+const languageNote = document.getElementById('language-note');
+function translateLabels() {
+  document.documentElement.lang = language.lang;
+  for (const el of document.querySelectorAll('[data-i18n]')) if (!notices.has(el)) el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle);
+  for (const el of document.querySelectorAll('[data-i18n-aria-label]')) el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
+}
+translateLabels();
+language.ready.then(() => { syncLanguageChoice(); languageGroup.disabled = false; });
+languageGroup.addEventListener('change', async ({ target }) => {
+  if (languageGroup.disabled || !target.checked) return;
+  const hadFocus = document.activeElement === target;
+  languageGroup.disabled = true;
+  setNote(languageNote);
+  try { await language.set(target.value); }
+  catch { setNote(languageNote, msg('languageWriteFailed'), true); }
+  finally {
+    syncLanguageChoice(); languageGroup.disabled = false;
+    if (hadFocus && document.activeElement === document.body) languageGroup.querySelector(':checked')?.focus();
+  }
+});
 
 const views = {
   nohelper: document.getElementById("view-nohelper"),
@@ -31,6 +55,41 @@ preparePasswordsLaunch(send).then(({ url, native }) => {
   passwordsNativeLauncher = native;
   openPasswordsBtn.disabled = false;
 });
+const automaticSaveToggle = document.getElementById("automatic-save");
+const automaticSaveNote = document.getElementById("automatic-save-note");
+const retrySetting = document.getElementById("retry-automatic-save");
+let settingRevision = 0;
+function renderAutomaticSave(enabled) {
+  const unknown = enabled === null;
+  const retryFocused = document.activeElement === retrySetting;
+  automaticSaveToggle.checked = enabled === true;
+  automaticSaveToggle.disabled = automaticSaveToggle.parentElement.hidden = unknown;
+  retrySetting.hidden = !unknown;
+  setNote(automaticSaveNote, msg(unknown ? "settingReadFailed" : "automaticSaveNote"), unknown);
+  if (retryFocused && !unknown) automaticSaveToggle.focus();
+}
+async function readAutomaticSave() {
+  const revision = ++settingRevision;
+  try {
+    const settings = await chrome.storage.local.get("automaticSave");
+    if (revision === settingRevision) renderAutomaticSave(settings.automaticSave === true);
+  } catch { if (revision === settingRevision) renderAutomaticSave(null); }
+}
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== "local" || !changes.automaticSave) return;
+  settingRevision++;
+  renderAutomaticSave(changes.automaticSave.newValue === true);
+});
+retrySetting.addEventListener("click", readAutomaticSave);
+readAutomaticSave();
+automaticSaveToggle.addEventListener("change", async () => {
+  const enabled = automaticSaveToggle.checked;
+  automaticSaveToggle.disabled = true;
+  try { await chrome.storage.local.set({ automaticSave: enabled }); }
+  catch { automaticSaveToggle.checked = !enabled; setStatus(msg("errorOperation"), true); }
+  finally { automaticSaveToggle.disabled = false; }
+});
+
 const generatePasswordBtn = document.getElementById("generate-password");
 const generatedPasswordPanel = document.getElementById("generated-password-panel");
 const generatedPasswordInput = document.getElementById("generated-password");
@@ -64,7 +123,7 @@ function setupPrivacyToggle({ toggleId, rowId, noteId, service, storageKey, bloc
     toggle.checked = controlled ? detail.value === false : !controllable && detail.value === false;
     toggle.disabled = !controllable;
     if (!controllable) setNote(note, blockedText(detail.levelOfControl), true);
-    else if (detail.value === false && !controlled) setNote(note, t("disabledByBrowser"));
+    else if (detail.value === false && !controlled) setNote(note, msg("disabledByBrowser"));
     else setNote(note);
   };
   const render = () => pref.get({}, (detail) => {
@@ -72,10 +131,19 @@ function setupPrivacyToggle({ toggleId, rowId, noteId, service, storageKey, bloc
     renderDetail(detail);
   });
 
-  toggle.addEventListener("change", () => {
+  toggle.addEventListener("change", async () => {
     const on = toggle.checked;
     toggle.disabled = true;
-    chrome.storage?.local?.set({ [storageKey]: on });
+    try { await chrome.storage.local.set({ [storageKey]: on }); }
+    catch {
+      // The browser preference was not touched. Show its actual state, not the requested one.
+      pref.get({}, detail => {
+        if (!chrome.runtime.lastError && detail) renderDetail(detail);
+        else { toggle.checked = !on; toggle.disabled = false; }
+        setNote(note, msg("settingWriteFailed"), true);
+      });
+      return;
+    }
     const verify = () => {
       const writeFailed = !!chrome.runtime.lastError;
       pref.get({}, (detail) => {
@@ -86,7 +154,7 @@ function setupPrivacyToggle({ toggleId, rowId, noteId, service, storageKey, bloc
           ? detail.value === false && detail.levelOfControl === "controlled_by_this_extension"
           : detail.levelOfControl !== "controlled_by_this_extension");
         if (writeFailed || readFailed || !applied) {
-          setNote(note, t(refusedText), true);
+          setNote(note, msg(refusedText), true);
         }
       });
     };
@@ -104,7 +172,7 @@ setupPrivacyToggle({
   service: "passwordSavingEnabled",
   storageKey: "suppressSaveBubble",
   blockedText: (level) =>
-    t(level === "controlled_by_other_extensions" ? "controlledByExtension" : "controlledByPolicy"),
+    msg(level === "controlled_by_other_extensions" ? "controlledByExtension" : "controlledByPolicy"),
   refusedText: "browserRefused",
 });
 
@@ -120,13 +188,13 @@ async function renderPolicyToggle() {
   const r = await policyMsg("get");
   if (r.error || !r.ok || r.scopeVersion !== 2) {
     policyToggle.disabled = true;
-    setNote(policyNote, t("policyHelperNeeded"), true);
+    setNote(policyNote, msg("policyHelperNeeded"), true);
     return;
   }
   policyToggle.disabled = !!(r.managed && r.value === true);
-  document.getElementById("policy-scope").textContent = t("policyScope", r.browserName);
+  setNote(document.getElementById("policy-scope"), msg("policyScope", r.browserName));
   policyToggle.checked = !!r.hidden;
-  setNote(policyNote, r.managed && r.value === true ? t("controlledByPolicy") : "", r.managed && r.value === true);
+  setNote(policyNote, r.managed && r.value === true ? msg("controlledByPolicy") : "", r.managed && r.value === true);
 }
 
 policyToggle.addEventListener("change", async () => {
@@ -135,14 +203,14 @@ policyToggle.addEventListener("change", async () => {
   const r = await policyMsg(on ? "set" : "clear");
   policyToggle.disabled = false;
   if (r.error || !r.ok) {
-    setNote(policyNote, t("policyHelperFailed"), true);
+    setNote(policyNote, msg("policyHelperFailed"), true);
     policyToggle.checked = !on;
     return;
   }
   // reflect the REAL forced-policy state; the profile only sticks once approved
   policyToggle.checked = !!r.hidden;
-  if (on && !r.hidden) setNote(policyNote, t("approveProfile"));
-  else if (!on && r.hidden) setNote(policyNote, t("removeProfile"));
+  if (on && !r.hidden) setNote(policyNote, msg("approveProfile"));
+  else if (!on && r.hidden) setNote(policyNote, msg("removeProfile"));
   else setNote(policyNote);
 });
 
@@ -155,7 +223,7 @@ setupPrivacyToggle({
   noteId: "af-note",
   service: "autofillAddressEnabled",
   storageKey: "suppressAddressAutofill",
-  blockedText: () => t("controlledElsewhere"),
+  blockedText: () => msg("controlledElsewhere"),
   refusedText: "autofillRefused",
 });
 
@@ -172,7 +240,7 @@ function send(message) {
     });
   });
 }
-const responseText = (response, fallback = "errorOperation") => t(response?.errorKey || fallback);
+const responseText = (response, fallback = "errorOperation") => msg(response?.errorKey || fallback);
 let lastState = null;
 let renderSeq = 0;
 let pinOperation = null;
@@ -192,13 +260,14 @@ function updateControls() {
   refillBtn.disabled = busy;
 }
 function setNote(element, text = "", failed = false) {
-  element.textContent = text;
+  notices.set(element, text);
+  const value = text ? text() : '';
+  if (element.textContent !== value) element.textContent = value;
   element.classList.toggle("failed", failed);
 }
 function setStatus(text = "", failed = false) {
   // One shared live region below the active view; empty text occupies no space.
-  if (statusMessage.textContent !== text) statusMessage.textContent = text;
-  statusMessage.classList.toggle("failed", failed);
+  setNote(statusMessage, text, failed);
 }
 
 openPasswordsBtn.addEventListener("click", async () => {
@@ -208,11 +277,11 @@ openPasswordsBtn.addEventListener("click", async () => {
     try {
       const result = await send({ type: "openPasswords" });
       if (!result?.ok) throw new Error("Passwords launch failed");
-      setStatus(t(result.target === "app" ? "passwordOpenRequested" : "passwordSettingsOpened"));
+      setStatus(msg(result.target === "app" ? "passwordOpenRequested" : "passwordSettingsOpened"));
     } catch {
       passwordsNativeLauncher = false;
       // A new click preserves user activation for the browser-only fallback.
-      setStatus(t("passwordLaunchRetrySettings"), true);
+      setStatus(msg("passwordLaunchRetrySettings"), true);
     } finally {
       openPasswordsBtn.disabled = false;
     }
@@ -228,10 +297,10 @@ openPasswordsBtn.addEventListener("click", async () => {
   try {
     link.click();
     // External protocols have no completion callback; never claim the app opened.
-    setStatus(t(passwordsLaunchUrl === PASSWORDS_MODERN_SETTINGS_URL ? "passwordOpenModern" :
+    setStatus(msg(passwordsLaunchUrl === PASSWORDS_MODERN_SETTINGS_URL ? "passwordOpenModern" :
       passwordsLaunchUrl === PASSWORDS_HELP_URL ? "passwordOpenHelp" : "passwordOpenRequested"));
   } catch {
-    setStatus(t("openPasswordsFailed"), true);
+    setStatus(msg("openPasswordsFailed"), true);
   } finally {
     link.remove();
     openPasswordsBtn.disabled = false;
@@ -258,9 +327,9 @@ copyGeneratedPasswordBtn.addEventListener("click", async () => {
       generatedPasswordInput.select();
       if (!document.execCommand("copy")) throw new Error("copy failed");
     }
-    setStatus(t("passwordCopied"));
+    setStatus(msg("passwordCopied"));
   } catch {
-    setStatus(t("copyPasswordFailed"), true);
+    setStatus(msg("copyPasswordFailed"), true);
   }
 });
 
@@ -270,7 +339,7 @@ function pinBusy(operation) {
   updateControls();
   views.pin.setAttribute("aria-busy", String(!!operation));
 }
-function setPinStatus(text = t("pinMessage"), failed = false) {
+function setPinStatus(text = msg("pinMessage"), failed = false) {
   setStatus(text, failed);
   pinInput.setAttribute("aria-invalid", String(failed));
 }
@@ -284,35 +353,44 @@ function render(state) {
   setStatus();
   updateControls();
   setDot(state);
-  refreshBtn.hidden = !["unlocked", "needs_pin"].includes(state);
+  refreshBtn.hidden = state !== "unlocked";
   if (state !== "needs_pin") { pinInput.value = ""; pinInput.setAttribute("aria-invalid", "false"); }
-  if (state === "no_helper") { setStatus(t("noHelperMessage"), true); return show("nohelper"); }
+  if (state === "no_helper") { setStatus(msg("noHelperMessage"), true); return show("nohelper"); }
   if (state === "disconnected") {
     show("connecting");
-    setStatus(t("errorConnection"), true);
+    setStatus(msg("errorConnection"), true);
     return;
   }
   if (state === "needs_pin") {
     show("pin");
-    setPinStatus(t(pinOperation === "request" ? "requestingCode" : pinOperation === "verify" ? "verifying" : "pinMessage"));
+    setPinStatus(msg(pinOperation === "request" ? "requestingCode" : pinOperation === "verify" ? "verifying" : "pinMessage"));
     if (!pinOperation && !document.activeElement?.matches("#save-list input")) pinInput.focus();
     return;
   }
   if (state === "unlocked") { show("unlocked"); renderLogins(seq); return; }
   show("connecting");
-  setStatus(t("connecting"));
+  setStatus(msg("connecting"));
+}
+function labelAccount(item) {
+  const username = item.querySelector('.u'), fill = item.querySelector('button');
+  username.textContent = item.accountName || t('noUsername'); username.title = username.textContent;
+  fill.textContent = t('fill'); fill.setAttribute('aria-label', t('fillAccount', username.textContent));
+  fill.title = loginResult?.targetId ? '' : t('errorChooseField');
+}
+function labelRefill() {
+  const previous = loginResult?.refill;
+  if (previous) refillBtn.textContent = t('refillAccount', [previous.username || t('noUsername'), previous.host]);
 }
 function accountRow(login) {
   const item = document.createElement("li");
   item.accountName = login.username;
   const username = document.createElement("span");
-  username.className = "u"; username.textContent = login.username || t("noUsername"); username.title = username.textContent;
+  username.className = "u";
   const fill = document.createElement("button");
-  fill.textContent = t("fill"); fill.setAttribute("aria-label", t("fillAccount", username.textContent));
   fill.addEventListener("click", async () => {
     if (listOperation || fillOperation || !loginResult?.targetId) return;
     const operation = fillOperation = { seq: renderSeq };
-    updateControls(); setStatus(t("filling"));
+    updateControls(); setStatus(msg("filling"));
     try {
       const response = await send({ type: "fillOnPage", targetId: loginResult.targetId, loginName: login });
       if (operation !== fillOperation) return;
@@ -323,6 +401,7 @@ function accountRow(login) {
     }
   });
   item.append(username, fill);
+  labelAccount(item);
   return item;
 }
 
@@ -331,16 +410,20 @@ function renderLogins(seq = renderSeq, refresh = false) {
   const operation = listOperation = { seq, refresh };
   updateControls();
   if (!loginResult && !refresh) {
-    setStatus(t("loadingLogins"));
+    setStatus(msg("loadingLogins"));
     refillBtn.hidden = true;
   }
-  if (refresh) setStatus(t("refreshingLogins"));
+  if (refresh) setStatus(msg("refreshingLogins"));
   operation.promise = (async () => {
     try {
       const invalidated = refresh ? await send({ type: "refreshLogins" }) : { ok: true };
       const result = invalidated.ok ? await send({ type: "getLogins" }) : invalidated;
       if (operation !== listOperation || seq !== renderSeq || lastState !== "unlocked") return false;
       if (!result.ok) {
+        loginResult = null;
+        list.replaceChildren();
+        refillBtn.hidden = true;
+        document.getElementById("site").hidden = true;
         setStatus(responseText(result, "loadFailed"), true);
         return false;
       }
@@ -349,14 +432,14 @@ function renderLogins(seq = renderSeq, refresh = false) {
       site.hidden = !result.logins.length;
       if (site.textContent !== result.host) site.textContent = result.host || "";
       refillBtn.hidden = !result.refill;
-      if (result.refill) refillBtn.textContent = t("refillAccount", [result.refill.username || t("noUsername"), result.refill.host]);
+      labelRefill();
       const existing = new Map([...list.children].map((item) => [item.accountName, item]));
       const rows = result.logins.map((login) => existing.get(login.username) || accountRow(login));
       if (rows.length !== list.children.length || rows.some((row, index) => row !== list.children[index])) {
         list.replaceChildren(...rows);
       }
       for (const button of list.querySelectorAll("button")) button.title = result.targetId ? "" : t("errorChooseField");
-      setStatus(!result.logins.length ? t("noLogins") : refresh ? t("passwordsRefreshed") : "");
+      setStatus(!result.logins.length ? msg("noLogins") : refresh ? msg("passwordsRefreshed") : "");
       return true;
     } finally {
       if (operation === listOperation) { listOperation = null; updateControls(); }
@@ -368,15 +451,15 @@ async function verifyPin() {
   if (pinOperation) return;
   const pin = normalizePin(pinInput.value);
   pinInput.value = pin;
-  if (pin.length !== 6) { setPinStatus(t("errorPinLength"), true); return; }
-  setPinStatus(t("verifying"));
+  if (pin.length !== 6) { setPinStatus(msg("errorPinLength"), true); return; }
+  setPinStatus(msg("verifying"));
   pinBusy("verify");
   try {
     const response = await send({ type: "verifyPin", pin });
     pinInput.value = "";
     if (response.ok) render(response.state);
     else {
-      setPinStatus(response.newCode ? t("enterNewCode", responseText(response, "verificationFailed")) : responseText(response, "verificationFailed"), true);
+      setPinStatus(response.newCode ? msg("enterNewCode", responseText(response, "verificationFailed")) : responseText(response, "verificationFailed"), true);
       if (response.state && response.state !== "needs_pin") render(response.state);
     }
   } finally { pinBusy(null); if (lastState === "needs_pin") pinInput.focus(); }
@@ -384,7 +467,7 @@ async function verifyPin() {
 async function requestNewCode(ifNeeded = false) {
   if (pinOperation) return;
   pinInput.value = "";
-  setPinStatus(t("requestingCode"));
+  setPinStatus(msg("requestingCode"));
   pinBusy("request");
   try {
     const response = await send({ type: "requestChallenge", ifNeeded });
@@ -394,7 +477,7 @@ async function requestNewCode(ifNeeded = false) {
       return;
     }
     render(response.state);
-    if (lastState === "needs_pin") setPinStatus(t(response.issued ? "newCodeReady" : "pinMessage"));
+    if (lastState === "needs_pin") setPinStatus(msg(response.issued ? "newCodeReady" : "pinMessage"));
   } finally { pinBusy(null); if (lastState === "needs_pin") pinInput.focus(); }
 }
 verifyBtn.addEventListener("click", verifyPin);
@@ -414,18 +497,17 @@ pinInput.addEventListener("input", () => {
 });
 refreshBtn.addEventListener("click", async () => {
   if (pinOperation || listOperation || fillOperation) return;
-  if (lastState === "needs_pin") await requestNewCode();
-  else if (lastState === "unlocked") await renderLogins(renderSeq, true);
+  if (lastState === "unlocked") await renderLogins(renderSeq, true);
 });
 refillBtn.addEventListener("click", async () => {
   if (listOperation || fillOperation) return;
   const operation = fillOperation = { seq: renderSeq };
-  updateControls(); setStatus(t("filling"));
+  updateControls(); setStatus(msg("filling"));
   try {
     const result = await send({ type: "refillOnPage" });
     if (operation !== fillOperation) return;
     const success = result.ok && result.filled;
-    setStatus(success ? t("refillComplete") : responseText(result, "fillFailed"), !success);
+    setStatus(success ? msg("refillComplete") : responseText(result, "fillFailed"), !success);
   } finally { if (operation === fillOperation) { fillOperation = null; updateControls(); } }
 });
 
@@ -434,19 +516,55 @@ let saveSnapshotVersion = 0;
 let saveRecoveryError = null;
 let recoveryNotice;
 let recoveryRetry;
+const savePageButton = document.getElementById("save-page-password");
+const savePageMessage = document.getElementById("save-page-message");
+savePageButton.addEventListener("click", async () => {
+  if (savePageButton.disabled) return;
+  savePageButton.disabled = true;
+  setNote(savePageMessage);
+  try {
+    const version = saveSnapshotVersion;
+    const result = await send({ type: "reviewPagePassword" });
+    if (version === saveSnapshotVersion) renderSaves(result.saves, result.saveRecoveryError);
+    if (!result.ok) setNote(savePageMessage, responseText(result, "saveFailed"), true);
+    else if ([savePageButton, document.body].includes(document.activeElement)) {
+      saveRows.get(result.saveId)?.accountInput?.focus();
+    }
+  } finally { savePageButton.disabled = false; }
+});
 function updateSaveRow(row) {
   const save = row.save;
   row.text.classList.toggle("failed", ["failed", "blocked", "notice", "uncertain", "expired", "cancelPending"].includes(save.status) || save.messageKey === "saveNoAccount");
-  row.text.textContent = `${save.host} · ${save.username || t("noUsername")} — ${t(save.messageKey || "saveQueued")}`;
-  if (save.status === "needsAccount" && !row.accountInput) {
+  const editAccount = save.status === "needsAccount" || (save.manual && save.status === "review");
+  const account = save.username && !editAccount ? ` · ${save.username}` : "";
+  row.text.textContent = `${save.host}${account} — ${t(save.messageKey || "saveQueued")}`;
+  if (editAccount && !row.accountInput) {
+    const label = row.accountLabel = document.createElement("label");
+    label.className = "save-account";
+    const caption = row.accountCaption = document.createElement("span");
+    caption.className = "save-account-label";
     const input = row.accountInput = document.createElement("input");
-    input.type = "text"; input.autocomplete = "off"; input.value = row.accountDraft;
-    input.placeholder = t("saveAccountPlaceholder"); input.setAttribute("aria-label", t("saveAccountPlaceholder"));
-    input.addEventListener("input", () => { row.accountDraft = input.value; });
-    row.item.insertBefore(input, row.retry.parentNode === row.item ? row.retry : row.cancel);
-  } else if (save.status !== "needsAccount" && row.accountInput) {
-    row.accountDraft = row.accountInput.value;
-    row.accountInput.remove(); row.accountInput = null;
+    input.type = "text";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.autocapitalize = "none";
+    input.value = row.accountDraft ?? save.username;
+    input.setAttribute("aria-describedby", row.error.id);
+    input.addEventListener("input", () => {
+      row.accountDraft = input.value;
+      input.removeAttribute("aria-invalid");
+      setNote(row.error);
+    });
+    label.append(caption, input);
+    row.item.insertBefore(label, row.error);
+  } else if (!editAccount && row.accountInput) {
+    row.accountLabel.remove();
+    row.accountInput = null;
+    setNote(row.error);
+  }
+  if (row.accountInput) {
+    row.accountCaption.textContent = t(save.accountRequired ? "saveAccountLabel" : "saveAccountOptional");
+    row.accountInput.required = !!save.accountRequired;
   }
   const canRetry = ["queued", "review", "needsAccount", "failed", "uncertain"].includes(save.status);
   if (canRetry && row.retry.parentNode !== row.item) row.item.insertBefore(row.retry, row.cancel);
@@ -460,13 +578,22 @@ function updateSaveRow(row) {
 function saveRow(save) {
   const row = { save, item: document.createElement("li"), text: document.createElement("p"),
     retry: document.createElement("button"), cancel: document.createElement("button"),
-    accountInput: null, accountDraft: "", operation: null, errorText: "" };
+    accountInput: null, accountDraft: null, operation: null, errorText: "", error: document.createElement("span") };
+  row.error.id = `save-error-${save.id}`;
+  row.error.className = "subnote";
+  row.error.setAttribute("role", "status");
   row.item.dataset.saveId = save.id;
   row.text.className = "notice";
   row.retry.addEventListener("click", async () => {
     if (row.operation) return;
     const username = row.accountInput?.value;
-    if (row.accountInput && !username.trim()) { row.accountInput.focus(); return; }
+    if (row.accountInput?.required && !username.trim()) {
+      row.accountInput.setAttribute("aria-invalid", "true");
+      setNote(row.error, msg("saveAccountRequired"), true);
+      row.accountInput.focus();
+      return;
+    }
+    setNote(row.error);
     row.operation = "retry"; updateSaveRow(row);
     try {
       if (lastState !== "unlocked") await connectAndRender();
@@ -475,7 +602,11 @@ function saveRow(save) {
       if (saveRows.get(row.save.id) !== row) return;
       if (version === saveSnapshotVersion) renderSaves(result.saves, result.saveRecoveryError, !result.ok);
       if (!result.ok && !["submitted", "skipped", "expired"].includes(row.save.status)) {
-        row.errorText = responseText(result, "saveFailed"); setStatus(row.errorText, true);
+        setNote(row.error, responseText(result, "saveFailed"), true);
+        if (result.errorKey === "saveAccountRequired") {
+          row.accountInput?.setAttribute("aria-invalid", "true");
+          row.accountInput?.focus();
+        }
       }
     } finally { row.operation = null; updateSaveRow(row); }
   });
@@ -490,10 +621,10 @@ function saveRow(save) {
       if (saveRows.get(row.save.id) !== row) return;
       if (version === saveSnapshotVersion) renderSaves(result.saves, result.saveRecoveryError, !result.ok);
       if (!result.ok) { row.errorText = responseText(result, "saveFailed"); setStatus(row.errorText, true); }
-      else if (row.errorText && statusMessage.textContent === row.errorText) setStatus();
+      else if (row.errorText && statusMessage.textContent === row.errorText()) setStatus();
     } finally { row.operation = null; updateSaveRow(row); }
   });
-  row.item.append(row.text, row.cancel);
+  row.item.append(row.text, row.error, row.cancel);
   return row;
 }
 function renderSaves(saves, recoveryError, preserveMissing = false) {
@@ -537,6 +668,23 @@ function renderSaves(saves, recoveryError, preserveMissing = false) {
     }
   } else for (const row of saveRows.values()) updateSaveRow(row);
   section.hidden = !saveRows.size && !saveRecoveryError;
+}
+// Repaint in place: no connection, credential request or input replacement.
+function renderLanguage() {
+  syncLanguageChoice();
+  translateLabels();
+  for (const el of document.querySelectorAll('.scope-note, .subnote, .status-message')) {
+    const notice = notices.get(el);
+    if (notice) el.textContent = notice();
+  }
+  if (lastState) setDot(lastState);
+  for (const item of list.children) labelAccount(item);
+  labelRefill();
+  for (const row of saveRows.values()) updateSaveRow(row);
+  if (recoveryNotice) {
+    recoveryRetry.textContent = t('retry');
+    recoveryNotice.textContent = saveRecoveryError ? t('saveRecoveryFailed') : '';
+  }
 }
 let connecting = false;
 async function connectAndRender() {

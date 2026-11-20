@@ -25,7 +25,7 @@ async function disconnectedIcon(runtime) {
   return Object.fromEntries(entries);
 }
 
-export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIcon(api.runtime)) {
+export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIcon(api.runtime), t = key => api.i18n.getMessage(key)) {
   // setIcon resolves paths relative to the calling worker, which lives in src/.
   // Use extension-root URLs, just as the red-image loader does above.
   const normalIcons = Object.fromEntries(Object.entries(icons).map(([size, path]) => [size, api.runtime.getURL(path)]));
@@ -33,10 +33,13 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
   let applied = null;
   let desiredAttention = 0;
   let appliedAttention = null;
+  let desiredTitle, appliedTitle;
+  const dirty = () => desired !== applied || desiredAttention !== appliedAttention || desiredTitle !== appliedTitle;
   let running = null;
   let failureIcon = null;
   async function render() {
-    while (desired !== applied || desiredAttention !== appliedAttention) {
+    while (dirty()) {
+      const title = desiredTitle;
       const status = desired;
       const attention = desiredAttention;
       const notReady = status !== "unlocked";
@@ -47,7 +50,6 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
         if (status !== desired || attention !== desiredAttention) continue;
         details = { imageData: failureIcon };
       }
-      const title = api.i18n.getMessage(attention ? "toolbarSaveAttention" : titleKeys[status]);
       // Serialize writes so a slow failed-state update cannot overwrite recovery.
       const results = await Promise.allSettled([
         api.action.setIcon(details), api.action.setTitle({ title }),
@@ -57,6 +59,7 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
       for (const result of results) if (result.status === "rejected") throw result.reason;
       applied = status;
       appliedAttention = attention;
+      appliedTitle = title;
     }
   }
   return {
@@ -64,6 +67,7 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
       if (!api.action?.setIcon || !api.action?.setTitle) return Promise.resolve();
       desired = connecting ? "connecting" : state;
       desiredAttention = saveAttention;
+      desiredTitle = t(saveAttention ? "toolbarSaveAttention" : titleKeys[desired]);
       if (!running) {
         let completed = false;
         running = render().then(() => { completed = true; }).catch(() => {
@@ -71,7 +75,7 @@ export function createToolbarStatus(api, loadFailureIcon = () => disconnectedIco
           console.warn("FAPassword toolbar status could not be updated");
         }).finally(() => {
           running = null;
-          if (completed && (desired !== applied || desiredAttention !== appliedAttention)) this.update(desired, false, desiredAttention);
+          if (completed && dirty()) this.update(desired, false, desiredAttention);
         });
       }
       return running;

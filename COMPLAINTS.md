@@ -1,12 +1,11 @@
 # Apple iCloud Passwords complaints, and how FAPassword compares
 
 This maps 18 documented complaints about Apple's official iCloud Passwords
-Chromium extension to what FAPassword does. "Covered" means a regression exists in
-`test-harness/`; dependency-free checks run with `npm test`, while browser checks are optional.
+Chromium extension to what FAPassword does.
 Sources are user reports across the Chrome Web Store, Apple Communities,
 Google/Brave forums, GitHub, AppleInsider, and Macworld.
 
-Legend: ✅ covered in the named automated fixtures · 🟡 partial / requires live acceptance · ⛔ external platform constraint. These marks are not universal safety or compatibility guarantees.
+Legend: ✅ addressed by the extension · 🟡 partial / requires live verification · ⛔ external platform constraint. These marks are not universal safety or compatibility guarantees.
 
 | # | Complaint | Apple's behavior | FAPassword | Status |
 |---|---|---|---|---|
@@ -22,7 +21,7 @@ Legend: ✅ covered in the named automated fixtures · 🟡 partial / requires l
 | 10 | Subdomain / domain-matching failures | strict exact-host matching | passes the full hostname to the helper, which does Apple's own associated-domain matching | 🟡 |
 | 11 | Popup obscures the screen / can't dismiss | overlay z-index and positioning bugs, premature dismissal | the dropdown anchors beside the field, follows scroll/resize, dismisses on outside action, and lives in a closed Shadow DOM | ✅ |
 | 12 | "Never save" flag stuck, unclearable off-Mac | no UI to clear it | FAPassword does not create a local never-save list; save/update decisions remain in Apple's native sheet | N/A |
-| 13 | Save-new-password auto-saves without consent | aggressive auto-capture | a recent real user submit is required, then Apple's native confirmation sheet remains the write gate; scripted `requestSubmit()` is rejected | ✅ |
+| 13 | Save-new-password auto-saves without consent | aggressive auto-capture | automatic saving is off by default; manual saves require explicit review and Apple's native confirmation | ✅ |
 | 14 | No Linux support | needs the macOS/Windows helper | same constraint, the helper only exists on macOS/Windows | ⛔ |
 | 15 | Touch ID re-prompt friction | re-prompts per fill | the OS controls the biometric gate (`RequiresUserAuthenticationToFill`); can't be removed | ⛔ |
 | 16 | Dark-mode toolbar icon can be hard to recognize | the wide black dog/Apple silhouette loses detail at 16 px | original artwork retained; a future 16 px-specific redesign needs a solid high-contrast field and must preserve the dog/Apple shape | 🟡 |
@@ -45,7 +44,3 @@ Legend: ✅ covered in the named automated fixtures · 🟡 partial / requires l
   extension controls.
 - the Touch ID prompt (#15) and the once-per-browser-restart re-pair (#1): the OS
   and the protocol require them, and Apple's extension has them too.
-
-The dependency-free crypto/protocol suite and the optional browser suite are documented in
-[`test-harness/automation/README.md`](test-harness/automation/README.md). This file does not
-claim a historical pass count as a current result.

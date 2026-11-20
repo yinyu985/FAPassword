@@ -260,6 +260,46 @@
     }
   };
 
+  // src/shared.js
+  function normalizePin(value) {
+    return String(value ?? "").normalize("NFKC").replace(/\D/g, "").slice(0, 6);
+  }
+  function pageContext(value) {
+    try {
+      const url = new URL(value);
+      return {
+        url,
+        host: url.hostname.toLowerCase(),
+        origin: url.origin,
+        secure: url.protocol === "https:"
+      };
+    } catch {
+      return null;
+    }
+  }
+  function nativeHostUnavailable(message) {
+    return /native (?:messaging )?host.*(?:not found|forbidden|not allowed)|(?:forbidden|not allowed).*native (?:messaging )?host/i.test(message);
+  }
+  function errorKey(error) {
+    if (error?.errorKey) return error.errorKey;
+    const message = String(error?.message ?? error ?? "");
+    if (/incorrect code/i.test(message)) return "errorIncorrectCode";
+    if (/challenge_reissued|new code|expired code/i.test(error?.code || message)) return "errorNewCode";
+    if (/timeout|timed out/i.test(message)) return "errorTimeout";
+    if (/not unlocked|invalid session|session changed/i.test(message)) return "errorLocked";
+    if (nativeHostUnavailable(message)) return "errorNoHelper";
+    if (/connection|disconnected|not connected|native (?:messaging )?host|port.*closed/i.test(message)) return "errorConnection";
+    if (/page|frame|document|target|stale|superseded/i.test(message)) return "errorPageChanged";
+    if (/cancel|abort/i.test(message)) return "errorCancelled";
+    if (/HTTPS|URL|unavailable/i.test(message)) return "pageUnavailable";
+    if (/protocol|capabilities|HAMK|authentication|encoding|hex|base64|format|payload|message|session/i.test(message)) return "errorProtocol";
+    return "errorOperation";
+  }
+  async function activeTab() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab;
+  }
+
   // src/protocol.js
   var NATIVE_HOST = "com.apple.passwordmanager";
   var BROWSER_NAME = "Chrome";
@@ -452,14 +492,14 @@
         try {
           port = chrome.runtime.connectNative(NATIVE_HOST);
         } catch (e) {
-          this._setState(State.NoHelper);
+          this._setState(nativeHostUnavailable(e.message) ? State.NoHelper : State.Disconnected);
           return reject(e);
         }
         this.port = port;
         port.onMessage.addListener((msg) => this._dispatch(msg, port));
         port.onDisconnect.addListener(() => {
           const message = chrome.runtime.lastError?.message || "native helper disconnected";
-          const state = /not found|forbidden|host/i.test(message) ? State.NoHelper : State.Disconnected;
+          const state = nativeHostUnavailable(message) ? State.NoHelper : State.Disconnected;
           this._dropConnection(port, state, new Error(message));
         });
         this._send(Command.GET_CAPABILITIES).then((reply) => {
@@ -736,45 +776,12 @@
     }
   };
 
-  // src/shared.js
-  function normalizePin(value) {
-    return String(value ?? "").normalize("NFKC").replace(/\D/g, "").slice(0, 6);
-  }
-  function pageContext(value) {
-    try {
-      const url = new URL(value);
-      return {
-        url,
-        host: url.hostname.toLowerCase(),
-        origin: url.origin,
-        secure: url.protocol === "https:"
-      };
-    } catch {
-      return null;
+  // src/page-policy.js
+  globalThis.FAPASSWORD_PAGE_POLICY = Object.freeze({
+    allows(url) {
+      return url.protocol === "https:" || url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]" || url.hostname.endsWith(".localhost"));
     }
-  }
-  function isLocalDevHost(host) {
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host?.endsWith(".localhost");
-  }
-  function errorKey(error) {
-    if (error?.errorKey) return error.errorKey;
-    const message = String(error?.message ?? error ?? "");
-    if (/incorrect code/i.test(message)) return "errorIncorrectCode";
-    if (/challenge_reissued|new code|expired code/i.test(error?.code || message)) return "errorNewCode";
-    if (/timeout|timed out/i.test(message)) return "errorTimeout";
-    if (/not unlocked|invalid session|session changed/i.test(message)) return "errorLocked";
-    if (/not found|forbidden.*host|native.*host/i.test(message)) return "errorNoHelper";
-    if (/connection|disconnected|not connected/i.test(message)) return "errorConnection";
-    if (/page|frame|document|target|stale|superseded/i.test(message)) return "errorPageChanged";
-    if (/cancel|abort/i.test(message)) return "errorCancelled";
-    if (/HTTPS|URL|unavailable/i.test(message)) return "pageUnavailable";
-    if (/protocol|capabilities|HAMK|authentication|encoding|hex|base64|format|payload|message|session/i.test(message)) return "errorProtocol";
-    return "errorOperation";
-  }
-  async function activeTab() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tab;
-  }
+  });
 
   // src/session-cache.js
   var SessionCache = class {
@@ -846,6 +853,830 @@
     return { ok: true, popupOpened, state: client2.state, challengeReady };
   }
 
+  // _locales/en/messages.json
+  var messages_default = {
+    extensionName: {
+      message: "FAPassword"
+    },
+    extensionDescription: {
+      message: "An unofficial Apple Passwords client for Chromium—because Apple's extension sucks."
+    },
+    openPopupCommand: {
+      message: "Open FAPassword"
+    },
+    toolbarConnecting: { message: "FAPassword — Connecting to Apple Passwords…" },
+    toolbarDisconnected: { message: "FAPassword — Connection failed. Open to retry." },
+    toolbarNoHelper: { message: "FAPassword — Apple Passwords helper unavailable. Open for details." },
+    toolbarLocked: { message: "FAPassword — Locked. Open to unlock Apple Passwords." },
+    toolbarUnlocked: { message: "FAPassword — Connected and unlocked." },
+    toolbarSaveAttention: { message: "FAPassword — Password saving needs attention. Open to unlock or review." },
+    passwordActions: {
+      message: "Password actions"
+    },
+    openPasswords: {
+      message: "Open Apple Passwords"
+    },
+    generatePassword: {
+      message: "Generate password"
+    },
+    generatedPassword: {
+      message: "Generated password"
+    },
+    includeSpecialCharacters: {
+      message: "Include special characters"
+    },
+    passwordLength: {
+      message: "Length"
+    },
+    generatedPasswordHelp: {
+      message: "Use Copy to place it in the clipboard."
+    },
+    copyPassword: {
+      message: "Copy"
+    },
+    passwordCopied: {
+      message: "Password copied to the clipboard."
+    },
+    copyPasswordFailed: {
+      message: "Could not copy the password."
+    },
+    openingPasswords: {
+      message: "Opening Apple Passwords…"
+    },
+    passwordAppOpened: {
+      message: "Apple Passwords opened."
+    },
+    passwordOpenRequested: {
+      message: "Opening requested. Approve the browser prompt if shown."
+    },
+    passwordOpenModern: {
+      message: "In AutoFill & Passwords, choose Open Passwords."
+    },
+    passwordSettingsOpened: {
+      message: "Could not launch the Passwords app. Opening password settings instead."
+    },
+    passwordLaunchRetrySettings: {
+      message: "Could not open Apple Passwords. Click Open Apple Passwords again to try System Settings."
+    },
+    passwordOpenHelp: {
+      message: "Could not determine your macOS version. Apple's opening instructions are available in the new tab."
+    },
+    openPasswordsFailed: {
+      message: "Could not open Apple Passwords settings from this browser."
+    },
+    refreshPasswords: {
+      message: "Refresh accounts"
+    },
+    refreshingLogins: {
+      message: "Refreshing accounts…"
+    },
+    status: {
+      message: "Status"
+    },
+    noHelperMessage: {
+      message: "Couldn't reach Apple's password helper. This needs macOS 14+ with the Passwords app, and the extension must run with Apple's accepted ID."
+    },
+    pinMessage: {
+      message: "Enter your Mac’s six-digit code. Dismissed it? Request a new code below."
+    },
+    verificationCode: {
+      message: "Verification code"
+    },
+    unlock: {
+      message: "Unlock"
+    },
+    requestNewCode: {
+      message: "Request a new code"
+    },
+    requestingNewCode: {
+      message: "Requesting a new code…"
+    },
+    newCodeReady: {
+      message: "Enter your Mac’s new six-digit code. Dismissed it? Request another below."
+    },
+    connecting: {
+      message: "Connecting to Apple Passwords…"
+    },
+    noLogins: {
+      message: "No saved passwords for this site."
+    },
+    browserControls: {
+      message: "Browser controls"
+    },
+    on: {
+      message: "On"
+    },
+    off: {
+      message: "Off"
+    },
+    hideSaveBubble: {
+      message: "Hide password save prompts"
+    },
+    hidePasswordManager: {
+      message: "Turn off browser password saving"
+    },
+    hideAddressAutofill: {
+      message: "Disable address autofill"
+    },
+    controlledByExtension: {
+      message: "Controlled by another extension"
+    },
+    controlledByPolicy: {
+      message: "Controlled by browser policy"
+    },
+    browserRefused: {
+      message: "Blocked; check password settings"
+    },
+    policyHelperNeeded: {
+      message: "Install helper: native/install.sh"
+    },
+    policyHelperFailed: {
+      message: "Repair helper: native/install.sh"
+    },
+    approveProfile: {
+      message: "Approve profile in System Settings"
+    },
+    removeProfile: {
+      message: "Remove profile in System Settings"
+    },
+    controlledElsewhere: {
+      message: "controlled elsewhere"
+    },
+    disabledByBrowser: {
+      message: "Already disabled in browser"
+    },
+    autofillRefused: {
+      message: "Blocked; check autofill settings"
+    },
+    httpPageUnavailable: { message: "Filling and saving are off on this HTTP page. Use HTTPS if the site supports it." },
+    pageUnavailable: {
+      message: "FAPassword can't run on this page."
+    },
+    loadFailed: {
+      message: "Couldn't load logins."
+    },
+    fill: {
+      message: "Fill"
+    },
+    fillFailed: {
+      message: "Couldn't fill this page."
+    },
+    verificationFailed: {
+      message: "Verification failed."
+    },
+    enterNewCode: {
+      message: "$ERROR$ — enter the new code on your Mac",
+      placeholders: {
+        error: {
+          content: "$1"
+        }
+      }
+    },
+    codeRequestFailed: {
+      message: "Couldn't request a code."
+    },
+    refilled: {
+      message: "Re-filled $USERNAME$ with the latest password",
+      placeholders: {
+        username: {
+          content: "$1"
+        }
+      }
+    },
+    passwordsRefreshed: {
+      message: "Account list refreshed."
+    },
+    noUsername: {
+      message: "(no username)"
+    },
+    suggestionsLabel: {
+      message: "FAPassword suggestions"
+    },
+    openToUnlock: {
+      message: "Open FAPassword to unlock…"
+    },
+    requestingCode: {
+      message: "Requesting a code from your Mac…"
+    },
+    completeUnlockInPopup: {
+      message: "Complete unlocking in the FAPassword popup"
+    },
+    codeReadyClickToolbar: {
+      message: "Code ready — click the FAPassword toolbar icon to enter it"
+    },
+    unlockFailed: {
+      message: "Couldn't start unlocking — click the FAPassword toolbar icon to retry"
+    },
+    strongPassword: {
+      message: "Strong Password"
+    },
+    noSpecialCharacters: {
+      message: "Without Special Characters"
+    },
+    retry: {
+      message: "Retry"
+    },
+    dismiss: {
+      message: "Dismiss"
+    },
+    cancelSave: {
+      message: "Cancel request"
+    },
+    pendingSaves: {
+      message: "Password save requests"
+    },
+    loadingLogins: {
+      message: "Loading accounts…"
+    },
+    filling: {
+      message: "Waiting for Apple Passwords…"
+    },
+    verifying: {
+      message: "Verifying…"
+    },
+    stateUnlocked: {
+      message: "Apple Passwords is unlocked"
+    },
+    stateLocked: {
+      message: "Apple Passwords needs a verification code"
+    },
+    stateDisconnected: {
+      message: "Apple Passwords is disconnected"
+    },
+    errorIncorrectCode: {
+      message: "The code is incorrect."
+    },
+    errorNewCode: {
+      message: "Enter the newest code shown on your Mac."
+    },
+    errorTimeout: {
+      message: "The request timed out. Please try again."
+    },
+    errorLocked: {
+      message: "The session expired. Unlock Apple Passwords again."
+    },
+    errorNoHelper: {
+      message: "The Apple Passwords helper is unavailable. Check the installation and retry."
+    },
+    errorConnection: {
+      message: "Apple Passwords is disconnected. Retry to reconnect."
+    },
+    errorPageChanged: {
+      message: "The page or selected field changed. Select the field and try again."
+    },
+    errorCancelled: {
+      message: "The request was cancelled."
+    },
+    errorProtocol: {
+      message: "The helper returned an invalid response. Reconnect and try again."
+    },
+    errorOperation: {
+      message: "The operation failed. Please try again."
+    },
+    errorChooseField: {
+      message: "Select a visible login field on the page first."
+    },
+    errorPartialFill: {
+      message: "The password could not be filled safely. Check the fields and try again."
+    },
+    errorPinLength: {
+      message: "Enter all 6 digits."
+    },
+    errorPasswordConfirmation: {
+      message: "The new password and confirmation do not match. Nothing was offered for saving."
+    },
+    extensionSettings: { message: "Settings" },
+    automaticSave: { message: "Automatically request password saving" },
+    retrySetting: { message: "Retry reading setting" },
+    settingReadFailed: { message: "The automatic saving setting could not be read. Retry to check whether it is on." },
+    settingWriteFailed: { message: "Your choice could not be stored. The browser setting was not changed. Please try again." },
+    automaticSaveNote: { message: "Can capture passwords when you submit a form and prompt you to unlock." },
+    savePagePassword: { message: "Save password from this page" },
+    saveNoPasswordOnPage: { message: "Enter the password on the page and use this button before submitting. If the form is gone, you can add the entry in Apple Passwords." },
+    saveAutomaticOff: { message: "Automatic password saving is off." },
+    saveManualReview: { message: "Check the site and account before saving to Apple Passwords." },
+    saveQueued: {
+      message: "Waiting to send the save request."
+    },
+    saveWaitingUnlock: {
+      message: "Unlock Apple Passwords within 3 minutes to send this save request."
+    },
+    saveSending: {
+      message: "Sending to Apple Passwords…"
+    },
+    saveSubmitted: {
+      message: "Save request sent. Complete any confirmation on your Mac; saving is not yet verified."
+    },
+    saveUncertain: {
+      message: "Could not confirm request delivery. Check Apple Passwords before retrying."
+    },
+    saveFailed: {
+      message: "The save request failed. Retry before it expires, or cancel it."
+    },
+    saveExpiredUncertain: {
+      message: "The temporary password expired and was cleared. The previous request may have reached Apple. Check Apple Passwords before starting another save."
+    },
+    languageLabel: { message: "Language" },
+    languageAutomatic: { message: "Browser default" },
+    languageWriteFailed: { message: "Language preference not saved. Please try again." },
+    saveReplacementFailed: { message: "The new password was not retained. The previous draft is still in the popup. Keep the page open and try again." },
+    saveDraftUpdating: {
+      message: "The draft changed. Review the updated account and confirm again."
+    },
+    saveExpired: {
+      message: "The temporary password was cleared before this request finished. If you still want to save it, start a new save."
+    },
+    saveCancelled: {
+      message: "The pending request was cancelled. Dismiss any remaining Mac confirmation separately."
+    },
+    saveUnchanged: {
+      message: "No new save request is needed for these unchanged credentials."
+    },
+    saveNoAccount: {
+      message: "Account is unclear. Enter the account below to confirm saving; the candidate expires in 3 minutes."
+    },
+    saveReview: { message: "Generated password retained for 3 minutes. Submit the form, or confirm saving here." },
+    saveConfirm: { message: "Confirm saving" },
+    saveAccountLabel: { message: "Account" },
+    saveAccountOptional: { message: "Account (optional)" },
+    saveAccountRequired: { message: "Enter an account. This save requires one." },
+    saveStorageFailed: { message: "Could not retain the save request across a background restart. Keep this page open and retry." },
+    saveRecoveredReview: { message: "Request recovered after a background restart. Check the account and confirm saving again." },
+    saveCancelling: { message: "Recording cancellation. This request will not be sent while cancellation is pending." },
+    saveCancelFailed: { message: "Cancellation could not be retained. The request is paused; retry cancellation before it expires." },
+    saveRecoveryFailed: { message: "Pending save requests could not be read. Retry; an empty list does not mean there are no pending requests." },
+    saveQueueFull: { message: "Too many pending saves. Confirm or cancel an existing request, then retry." },
+    refillComplete: {
+      message: "The selected account was filled again."
+    },
+    fillAccount: {
+      message: "Fill $USERNAME$",
+      placeholders: {
+        username: {
+          content: "$1"
+        }
+      }
+    },
+    refillAccount: {
+      message: "Fill $USERNAME$ on $HOST$ again",
+      placeholders: {
+        username: {
+          content: "$1"
+        },
+        host: {
+          content: "$2"
+        }
+      }
+    },
+    policyScope: {
+      message: "Applies only to $BROWSER$.",
+      placeholders: {
+        browser: {
+          content: "$1"
+        }
+      }
+    }
+  };
+
+  // _locales/zh_CN/messages.json
+  var messages_default2 = {
+    extensionName: {
+      message: "FAPassword"
+    },
+    extensionDescription: {
+      message: "非官方 Chromium 版 Apple 密码客户端——因为 Apple 自己的扩展实在太难用了。"
+    },
+    openPopupCommand: {
+      message: "打开 FAPassword"
+    },
+    toolbarConnecting: { message: "FAPassword — 正在连接 Apple 密码…" },
+    toolbarDisconnected: { message: "FAPassword — 连接失败，打开扩展重试。" },
+    toolbarNoHelper: { message: "FAPassword — Apple 密码助手不可用，打开扩展查看详情。" },
+    toolbarLocked: { message: "FAPassword — 尚未解锁，打开扩展完成验证。" },
+    toolbarUnlocked: { message: "FAPassword — 已连接并解锁。" },
+    toolbarSaveAttention: { message: "FAPassword — 密码保存需要处理，请打开扩展解锁或查看原因。" },
+    passwordActions: {
+      message: "密码操作"
+    },
+    openPasswords: {
+      message: "打开 Apple 密码"
+    },
+    generatePassword: {
+      message: "生成强密码"
+    },
+    generatedPassword: {
+      message: "生成的密码"
+    },
+    includeSpecialCharacters: {
+      message: "包含特殊字符"
+    },
+    passwordLength: {
+      message: "长度"
+    },
+    generatedPasswordHelp: {
+      message: "点击“复制”将密码放入剪贴板。"
+    },
+    copyPassword: {
+      message: "复制"
+    },
+    passwordCopied: {
+      message: "密码已复制到剪贴板。"
+    },
+    copyPasswordFailed: {
+      message: "无法复制密码。"
+    },
+    openingPasswords: {
+      message: "正在打开 Apple 密码…"
+    },
+    passwordAppOpened: {
+      message: "Apple 密码已打开。"
+    },
+    passwordOpenRequested: {
+      message: "已请求打开；如浏览器询问，请确认。"
+    },
+    passwordOpenModern: {
+      message: "请在“自动填充与密码”中点击“打开密码”。"
+    },
+    passwordSettingsOpened: {
+      message: "无法启动“密码”App，正在打开密码设置。"
+    },
+    passwordLaunchRetrySettings: {
+      message: "无法打开 Apple 密码，请再次点击“打开 Apple 密码”尝试系统设置入口。"
+    },
+    passwordOpenHelp: {
+      message: "未能识别 macOS 版本，已在新标签页提供 Apple 的打开说明。"
+    },
+    openPasswordsFailed: {
+      message: "此浏览器无法打开 Apple 密码设置。"
+    },
+    refreshPasswords: {
+      message: "刷新账号列表"
+    },
+    refreshingLogins: {
+      message: "正在刷新账号…"
+    },
+    status: {
+      message: "状态"
+    },
+    noHelperMessage: {
+      message: "无法连接 Apple 密码辅助程序。需要 macOS 14 或更高版本、密码 App，并且扩展必须使用 Apple 接受的 ID。"
+    },
+    pinMessage: {
+      message: "输入 Mac 上的六位验证码。提示已关闭？点击下方获取新验证码。"
+    },
+    verificationCode: {
+      message: "验证码"
+    },
+    unlock: {
+      message: "解锁"
+    },
+    requestNewCode: {
+      message: "获取新验证码"
+    },
+    requestingNewCode: {
+      message: "正在获取新验证码…"
+    },
+    newCodeReady: {
+      message: "输入 Mac 上新的六位验证码。提示已关闭？可在下方重新获取。"
+    },
+    connecting: {
+      message: "正在连接 Apple 密码…"
+    },
+    noLogins: {
+      message: "此网站没有已保存的密码。"
+    },
+    browserControls: {
+      message: "浏览器控制"
+    },
+    on: {
+      message: "开"
+    },
+    off: {
+      message: "关"
+    },
+    hideSaveBubble: {
+      message: "隐藏保存密码提示"
+    },
+    hidePasswordManager: {
+      message: "关闭浏览器密码保存"
+    },
+    hideAddressAutofill: {
+      message: "关闭地址自动填充"
+    },
+    controlledByExtension: {
+      message: "由其他扩展控制"
+    },
+    controlledByPolicy: {
+      message: "由浏览器策略控制"
+    },
+    browserRefused: {
+      message: "操作受限，请检查密码设置"
+    },
+    policyHelperNeeded: {
+      message: "安装助手：native/install.sh"
+    },
+    policyHelperFailed: {
+      message: "修复助手：native/install.sh"
+    },
+    approveProfile: {
+      message: "请在系统设置中批准描述文件"
+    },
+    removeProfile: {
+      message: "请在系统设置中移除描述文件"
+    },
+    controlledElsewhere: {
+      message: "由其他位置控制"
+    },
+    disabledByBrowser: {
+      message: "浏览器本身已关闭"
+    },
+    autofillRefused: {
+      message: "操作受限，请检查自动填充设置"
+    },
+    httpPageUnavailable: { message: "此 HTTP 页面不支持填充或保存密码。如果网站支持 HTTPS，请改用 HTTPS。" },
+    pageUnavailable: {
+      message: "FAPassword 无法在此页面运行。"
+    },
+    loadFailed: {
+      message: "无法加载登录账号。"
+    },
+    fill: {
+      message: "填充"
+    },
+    fillFailed: {
+      message: "无法填充此页面。"
+    },
+    verificationFailed: {
+      message: "验证失败。"
+    },
+    enterNewCode: {
+      message: "$ERROR$ — 请输入 Mac 上的新验证码",
+      placeholders: {
+        error: {
+          content: "$1"
+        }
+      }
+    },
+    codeRequestFailed: {
+      message: "无法获取验证码。"
+    },
+    refilled: {
+      message: "已使用最新密码重新填充 $USERNAME$",
+      placeholders: {
+        username: {
+          content: "$1"
+        }
+      }
+    },
+    passwordsRefreshed: {
+      message: "账号列表已刷新。"
+    },
+    noUsername: {
+      message: "（无用户名）"
+    },
+    suggestionsLabel: {
+      message: "FAPassword 建议"
+    },
+    openToUnlock: {
+      message: "打开 FAPassword 进行解锁…"
+    },
+    requestingCode: {
+      message: "正在向 Mac 请求验证码…"
+    },
+    completeUnlockInPopup: {
+      message: "请在 FAPassword 弹窗中完成解锁"
+    },
+    codeReadyClickToolbar: {
+      message: "验证码已生成，请点击工具栏中的 FAPassword 图标输入"
+    },
+    unlockFailed: {
+      message: "无法开始解锁，请点击工具栏中的 FAPassword 图标重试"
+    },
+    strongPassword: {
+      message: "强密码"
+    },
+    noSpecialCharacters: {
+      message: "不含特殊字符"
+    },
+    retry: {
+      message: "重试"
+    },
+    dismiss: {
+      message: "关闭"
+    },
+    cancelSave: {
+      message: "取消请求"
+    },
+    pendingSaves: {
+      message: "密码保存请求"
+    },
+    loadingLogins: {
+      message: "正在加载账号…"
+    },
+    filling: {
+      message: "正在等待 Apple 密码…"
+    },
+    verifying: {
+      message: "正在验证…"
+    },
+    stateUnlocked: {
+      message: "Apple 密码已解锁"
+    },
+    stateLocked: {
+      message: "Apple 密码需要验证码"
+    },
+    stateDisconnected: {
+      message: "Apple 密码未连接"
+    },
+    errorIncorrectCode: {
+      message: "验证码不正确。"
+    },
+    errorNewCode: {
+      message: "请输入 Mac 上最新显示的验证码。"
+    },
+    errorTimeout: {
+      message: "请求超时，请重试。"
+    },
+    errorLocked: {
+      message: "会话已失效，请重新解锁 Apple 密码。"
+    },
+    errorNoHelper: {
+      message: "无法使用 Apple 密码辅助程序，请检查安装后重试。"
+    },
+    errorConnection: {
+      message: "Apple 密码连接已断开，请重试连接。"
+    },
+    errorPageChanged: {
+      message: "页面或选中的输入框已变化，请重新选择输入框后重试。"
+    },
+    errorCancelled: {
+      message: "请求已取消。"
+    },
+    errorProtocol: {
+      message: "辅助程序返回了无效响应，请重新连接后重试。"
+    },
+    errorOperation: {
+      message: "操作失败，请重试。"
+    },
+    errorChooseField: {
+      message: "请先在页面上选择可见的登录输入框。"
+    },
+    errorPartialFill: {
+      message: "无法安全填入密码，请检查输入框后重试。"
+    },
+    errorPinLength: {
+      message: "请输入完整的六位验证码。"
+    },
+    errorPasswordConfirmation: {
+      message: "新密码与确认密码不一致，尚未发起保存。"
+    },
+    extensionSettings: { message: "设置" },
+    automaticSave: { message: "自动发起密码保存请求" },
+    retrySetting: { message: "重新读取设置" },
+    settingReadFailed: { message: "无法读取自动保存设置。请重试以确认是否开启。" },
+    settingWriteFailed: { message: "未能保存你的选择，浏览器设置未更改。请重试。" },
+    automaticSaveNote: { message: "提交网页表单时可能读取密码，并提示解锁。" },
+    savePagePassword: { message: "保存此页面的密码" },
+    saveNoPasswordOnPage: { message: "请在网页填写密码，并在提交表单前点此按钮。若表单已关闭，也可打开 Apple 密码手动添加。" },
+    saveAutomaticOff: { message: "自动保存密码已关闭。" },
+    saveManualReview: { message: "请核对网站和账号，再保存到 Apple 密码。" },
+    saveQueued: {
+      message: "等待发送保存请求。"
+    },
+    saveWaitingUnlock: {
+      message: "请在三分钟内解锁 Apple 密码以发送保存请求。"
+    },
+    saveSending: {
+      message: "正在发送给 Apple 密码…"
+    },
+    saveSubmitted: {
+      message: "保存请求已发出，请完成 Mac 上的确认；尚未验证实际保存结果。"
+    },
+    saveUncertain: {
+      message: "请求是否送达尚不确定，请先检查 Apple 密码再重试。"
+    },
+    saveFailed: {
+      message: "保存请求失败，请在过期前重试，或取消请求。"
+    },
+    saveExpiredUncertain: {
+      message: "暂存密码已过期并清除。上次请求可能已送达 Apple，请先检查 Apple 密码，再决定是否重新保存。"
+    },
+    languageLabel: { message: "语言" },
+    languageAutomatic: { message: "跟随浏览器" },
+    languageWriteFailed: { message: "语言设置未保存，请重试。" },
+    saveReplacementFailed: { message: "新密码未暂存，弹窗里保留的是上一次的草稿。请保持页面打开，再试一次。" },
+    saveDraftUpdating: {
+      message: "草稿已变化，请核对更新后的账号，再确认保存。"
+    },
+    saveExpired: {
+      message: "请求完成前，暂存密码已清除。如果仍想保存，请重新发起保存。"
+    },
+    saveCancelled: {
+      message: "待处理请求已取消；如 Mac 上仍有确认提示，请另行关闭。"
+    },
+    saveUnchanged: {
+      message: "凭据未变化，无需重复发起保存请求。"
+    },
+    saveNoAccount: {
+      message: "账号不明确。请在下方填写账号后确认保存；候选将在 3 分钟后过期。"
+    },
+    saveReview: { message: "生成密码已暂存 3 分钟。提交表单后自动处理，也可在这里确认保存。" },
+    saveConfirm: { message: "确认保存" },
+    saveAccountLabel: { message: "账号" },
+    saveAccountOptional: { message: "账号（可留空）" },
+    saveAccountRequired: { message: "请填写账号；此保存请求不能使用空账号。" },
+    saveStorageFailed: { message: "保存请求无法跨后台重启保留。请保持页面打开并重试。" },
+    saveRecoveredReview: { message: "后台重启后恢复的请求。请核对账号并再次确认保存。" },
+    saveCancelling: { message: "正在记录取消操作；取消处理期间不会发送该请求。" },
+    saveCancelFailed: { message: "取消操作暂时无法保留。请求已暂停，请在过期前重试取消。" },
+    saveRecoveryFailed: { message: "待保存请求暂时无法读取。请重试；空列表不代表没有待保存请求。" },
+    saveQueueFull: { message: "待处理的保存请求过多。请先确认或取消已有请求，再重试。" },
+    refillComplete: {
+      message: "已重新填充该账号。"
+    },
+    fillAccount: {
+      message: "填充 $USERNAME$",
+      placeholders: {
+        username: {
+          content: "$1"
+        }
+      }
+    },
+    refillAccount: {
+      message: "重新填充 $HOST$ 上的 $USERNAME$",
+      placeholders: {
+        username: {
+          content: "$1"
+        },
+        host: {
+          content: "$2"
+        }
+      }
+    },
+    policyScope: {
+      message: "仅影响 $BROWSER$。",
+      placeholders: {
+        browser: {
+          content: "$1"
+        }
+      }
+    }
+  };
+
+  // src/language.js
+  function createLanguage(api, changed = () => {
+  }) {
+    const normalize = (value) => value === "en" || value === "zh_CN" ? value : "auto";
+    let choice = "auto", revision2 = 0;
+    function apply(value) {
+      const next = normalize(value);
+      if (next === choice) return;
+      choice = next;
+      changed();
+    }
+    api.storage?.onChanged?.addListener((changes, area) => {
+      if (area === "local" && changes.uiLanguage) {
+        revision2++;
+        apply(changes.uiLanguage.newValue);
+      }
+    });
+    const ready = (async () => {
+      try {
+        const data = await api.storage?.local?.get("uiLanguage");
+        if (!revision2) apply(data?.uiLanguage);
+      } catch {
+      }
+    })();
+    return {
+      ready,
+      get choice() {
+        return choice;
+      },
+      get lang() {
+        return choice === "auto" ? (api.i18n?.getUILanguage?.() || "en").replaceAll("_", "-") : choice.replace("_", "-");
+      },
+      t(key, substitutions) {
+        if (choice === "auto") return api.i18n?.getMessage(key, substitutions) || key;
+        const message = (choice === "en" ? messages_default : messages_default2)[key];
+        if (!message?.message) return key;
+        const values = Array.isArray(substitutions) ? substitutions : [substitutions];
+        return message.message.replace(/\$(\w+)\$/g, (_, name) => {
+          const slot = message.placeholders?.[name.toLowerCase()]?.content;
+          return values[Number(slot?.slice(1)) - 1] ?? "";
+        });
+      },
+      async set(value) {
+        const next = normalize(value), before = revision2;
+        await api.storage.local.set({ uiLanguage: next });
+        if (before === revision2) {
+          revision2++;
+          apply(next);
+        }
+      }
+    };
+  }
+  globalThis.FAPASSWORD_LANGUAGE = createLanguage;
+
   // src/toolbar-status.js
   var icons = { 16: "icons/icon16.png", 48: "icons/icon48.png", 128: "icons/icon128.png" };
   var titleKeys = {
@@ -874,16 +1705,19 @@
     }));
     return Object.fromEntries(entries);
   }
-  function createToolbarStatus(api, loadFailureIcon = () => disconnectedIcon(api.runtime)) {
+  function createToolbarStatus(api, loadFailureIcon = () => disconnectedIcon(api.runtime), t = (key) => api.i18n.getMessage(key)) {
     const normalIcons = Object.fromEntries(Object.entries(icons).map(([size, path]) => [size, api.runtime.getURL(path)]));
     let desired = null;
     let applied = null;
     let desiredAttention = 0;
     let appliedAttention = null;
+    let desiredTitle, appliedTitle;
+    const dirty = () => desired !== applied || desiredAttention !== appliedAttention || desiredTitle !== appliedTitle;
     let running = null;
     let failureIcon = null;
     async function render() {
-      while (desired !== applied || desiredAttention !== appliedAttention) {
+      while (dirty()) {
+        const title = desiredTitle;
         const status = desired;
         const attention = desiredAttention;
         const notReady = status !== "unlocked";
@@ -893,7 +1727,6 @@
           if (status !== desired || attention !== desiredAttention) continue;
           details = { imageData: failureIcon };
         }
-        const title = api.i18n.getMessage(attention ? "toolbarSaveAttention" : titleKeys[status]);
         const results = await Promise.allSettled([
           api.action.setIcon(details),
           api.action.setTitle({ title }),
@@ -903,6 +1736,7 @@
         for (const result of results) if (result.status === "rejected") throw result.reason;
         applied = status;
         appliedAttention = attention;
+        appliedTitle = title;
       }
     }
     return {
@@ -910,6 +1744,7 @@
         if (!api.action?.setIcon || !api.action?.setTitle) return Promise.resolve();
         desired = connecting2 ? "connecting" : state;
         desiredAttention = saveAttention;
+        desiredTitle = t(saveAttention ? "toolbarSaveAttention" : titleKeys[desired]);
         if (!running) {
           let completed = false;
           running = render().then(() => {
@@ -918,7 +1753,7 @@
             console.warn("FAPassword toolbar status could not be updated");
           }).finally(() => {
             running = null;
-            if (completed && (desired !== applied || desiredAttention !== appliedAttention)) this.update(desired, false, desiredAttention);
+            if (completed && dirty()) this.update(desired, false, desiredAttention);
           });
         }
         return running;
@@ -948,40 +1783,47 @@
         });
         return loading;
       },
-      save(entries) {
-        if (!storage) return Promise.resolve();
+      save(getEntries, didStore) {
+        if (!storage) return Promise.reject(new Error("save store unavailable"));
         if (!loaded) return Promise.reject(new Error("save store recovery unavailable"));
-        const snapshot = entries.map(({
-          id,
-          target,
-          host,
-          username,
-          password,
-          saveKind,
-          submissionId,
-          draftId,
-          expiresAt,
-          status,
-          attempts,
-          messageKey,
-          completedAt
-        }) => ({
-          id,
-          target,
-          host,
-          username,
-          password,
-          saveKind,
-          submissionId,
-          draftId,
-          expiresAt,
-          status,
-          attempts,
-          messageKey,
-          completedAt
-        }));
         const write = tail.catch(() => {
-        }).then(() => storage.set({ [key]: snapshot }));
+        }).then(async () => {
+          const snapshot = getEntries().map(({
+            id,
+            target,
+            host,
+            username,
+            password,
+            saveKind,
+            submissionId,
+            draftId,
+            expiresAt,
+            status,
+            attempts,
+            messageKey,
+            completedAt,
+            manual,
+            priorDeliveryUnknown
+          }) => ({
+            id,
+            target,
+            host,
+            username,
+            password,
+            saveKind,
+            submissionId,
+            draftId,
+            expiresAt,
+            status,
+            attempts,
+            messageKey,
+            completedAt,
+            manual,
+            priorDeliveryUnknown
+          }));
+          await storage.set({ [key]: snapshot });
+          didStore?.();
+        });
         tail = write;
         return write;
       }
@@ -990,7 +1832,8 @@
 
   // src/background.js
   var client = new ApplePasswords();
-  var toolbar = createToolbarStatus(chrome);
+  var language = createLanguage(chrome, () => updateToolbar());
+  var toolbar = createToolbarStatus(chrome, void 0, language.t);
   var connectionAttempt = null;
   var connecting = false;
   var passwordCache = new SessionCache(12e4, () => client.ready);
@@ -1006,30 +1849,47 @@
   var pendingSaves = /* @__PURE__ */ new Map();
   var SAVE_TTL = 18e4;
   var saveStore = createSaveStore(chrome.storage?.session);
-  var saveStorageError = false;
   var savesRecovered = false;
   var saveRecoveryError = null;
   var saveRecoveryAttempt = null;
   var flushing = false;
   var lastConnectionError = null;
   var revision = 0;
+  var savePreferenceVersion = 0;
+  async function readAutomaticSaveSetting() {
+    const version = savePreferenceVersion;
+    const settings = await chrome.storage.local.get("automaticSave");
+    if (version !== savePreferenceVersion) throw new Error("save preference changed during read");
+    return settings.automaticSave === true;
+  }
   var ownUi = (sender) => sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("src/popup.html");
   var frameKey = (tabId, frameId) => `${tabId}:${frameId}`;
   var operationKey = (documentId, requestId) => `${documentId}:${requestId}`;
   var usablePage = (url) => {
     const context = pageContext(url);
-    return context && ["http:", "https:"].includes(context.url.protocol) && (context.secure || isLocalDevHost(context.host)) ? context : null;
+    return context && globalThis.FAPASSWORD_PAGE_POLICY.allows(context.url) ? context : null;
   };
+  var unavailablePageKey = (url) => pageContext(url)?.url.protocol === "http:" && !usablePage(url) ? "httpPageUnavailable" : "pageUnavailable";
   var failure = (error) => ({ ok: false, errorKey: error?.message === "save queue full" ? "saveQueueFull" : errorKey(error), error: String(error?.message ?? error), state: client.state });
   var digest = async (value) => Array.from(
     new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
     (byte) => byte.toString(16).padStart(2, "0")
   ).join("");
   function publicSaves() {
-    return [...pendingSaves.values()].map(({ id, host, username, saveKind, status, expiresAt, messageKey }) => ({ id, host, username, saveKind, status, expiresAt, messageKey }));
+    return [...pendingSaves.values()].filter((entry) => entry.status).map(({ id, host, username, saveKind, status, expiresAt, messageKey, manual }) => ({
+      id,
+      host,
+      username,
+      saveKind,
+      status,
+      expiresAt,
+      messageKey,
+      manual,
+      accountRequired: status === "needsAccount" || manual && !client.capabilities?.canSaveAccountWithEmptyUserName
+    }));
   }
   function updateToolbar() {
-    const attention = [...pendingSaves.values()].filter((entry) => ["queued", "review", "blocked", "needsAccount", "failed", "uncertain", "expired", "notice", "cancelPending"].includes(entry.status)).length;
+    const attention = [...pendingSaves.values()].filter((entry) => ["queued", "review", "blocked", "needsAccount", "failed", "uncertain", "notice", "cancelPending"].includes(entry.status)).length;
     toolbar.update(client.state, connecting, attention + (saveRecoveryError ? 1 : 0));
   }
   function publish() {
@@ -1050,6 +1910,7 @@
     if (state !== State.Unlocked) {
       clearCaches();
       recentFills.clear();
+      lastFillByTab.clear();
       for (const operation of operations.values()) operation.abort(new Error("session changed"));
     }
     publish();
@@ -1118,7 +1979,7 @@
   });
   function senderTarget(sender, documentKey) {
     const context = usablePage(sender.url);
-    if (!context || sender.tab?.id == null || !Number.isInteger(sender.frameId) || !sender.documentId || typeof documentKey !== "string") {
+    if (!context || !usablePage(sender.tab?.url) || sender.tab?.id == null || !Number.isInteger(sender.frameId) || !sender.documentId || typeof documentKey !== "string") {
       throw new Error("unavailable frame URL");
     }
     return {
@@ -1134,7 +1995,10 @@
   function rememberFrame(target) {
     const key = frameKey(target.tabId, target.frameId);
     const previous = frames.get(key);
-    if (previous && previous.documentId !== target.documentId) cancelDocument(previous.documentId);
+    if (previous && previous.documentId !== target.documentId) {
+      cancelDocument(previous.documentId);
+      if (target.frameId === 0 || lastFillByTab.get(target.tabId)?.documentId === previous.documentId) lastFillByTab.delete(target.tabId);
+    }
     frames.set(key, target);
   }
   async function sendToDocument(target, message) {
@@ -1162,6 +2026,14 @@
     }
     return { ...frame };
   }
+  async function focusedFrame(tab, context) {
+    const frame = lastFocusByTab.get(tab.id);
+    if (frame?.topOrigin === context.origin) {
+      const description = await sendToDocument(frame, { type: "describeFrame" }).catch(() => null);
+      if (description?.ok && description.documentKey === frame.documentKey) return frame;
+    }
+    return captureTopTarget(tab).catch(() => null);
+  }
   function ticketFor(target) {
     for (const [id2, value] of uiTargets) if (Date.now() - value.at > 18e4) uiTargets.delete(id2);
     const id = crypto.randomUUID();
@@ -1177,8 +2049,8 @@
     if (!response?.ok) throw new Error("page document changed");
     return target;
   }
-  async function performFill(target, username, requestId) {
-    if (typeof username !== "string" || typeof requestId !== "string") throw new Error("invalid fill message");
+  async function performFill(target, username, { requestId, stage }) {
+    if (typeof username !== "string" || typeof requestId !== "string" || !["username", "password"].includes(stage)) throw new Error("invalid fill message");
     const key = operationKey(target.documentId, requestId);
     if (operations.has(key)) throw new Error("duplicate fill request");
     const controller = new AbortController();
@@ -1187,26 +2059,25 @@
     const epoch = client.epoch;
     try {
       if (!client.ready) throw new Error("not unlocked");
-      const cacheKey = credentialKey(target.origin, username);
-      let credential = passwordCache.get(cacheKey);
-      if (!credential) {
-        credential = await client.getPasswordForLoginName(target.tabId, target.frameUrl, { username }, { signal: controller.signal, frameId: target.frameId });
-        if (!credential) return { ok: false, errorKey: "fillFailed", filled: false };
-        if (credential.username !== username || !client.ready || epoch !== client.epoch || controller.signal.aborted) throw new Error("session changed");
-        passwordCache.set(cacheKey, credential, generation);
+      const fill = { type: "fill", requestId, stage, expectedOrigin: target.origin, username };
+      let recent;
+      if (stage === "password") {
+        const cacheKey = credentialKey(target.origin, username);
+        let credential = passwordCache.get(cacheKey);
+        if (!credential) {
+          credential = await client.getPasswordForLoginName(target.tabId, target.frameUrl, { username }, { signal: controller.signal, frameId: target.frameId });
+          if (!credential) return { ok: false, errorKey: "fillFailed", filled: false };
+          if (credential.username !== username || !client.ready || epoch !== client.epoch || controller.signal.aborted) throw new Error("session changed");
+          passwordCache.set(cacheKey, credential, generation);
+        }
+        if (!client.ready || generation !== passwordCache.generation || controller.signal.aborted) throw new Error("session changed");
+        fill.password = credential.password;
+        recent = { username, digest: digest(fill.password), at: Date.now() };
+        recentFills.set(target.documentId, recent);
       }
-      if (!client.ready || generation !== passwordCache.generation || controller.signal.aborted) throw new Error("session changed");
-      const recent = { username, digest: digest(credential.password), at: Date.now() };
-      recentFills.set(target.documentId, recent);
-      const response = await sendToDocument(target, {
-        type: "fill",
-        requestId,
-        expectedOrigin: target.origin,
-        username: credential.username,
-        password: credential.password
-      });
-      if (!response?.filled && recentFills.get(target.documentId) === recent) recentFills.delete(target.documentId);
-      if (response?.filled) {
+      const response = await sendToDocument(target, fill);
+      if (recent && !response?.filled && recentFills.get(target.documentId) === recent) recentFills.delete(target.documentId);
+      if (response?.filled && client.ready && epoch === client.epoch && !controller.signal.aborted && frames.get(frameKey(target.tabId, target.frameId))?.documentId === target.documentId) {
         recordMru(target.origin, username);
         lastFillByTab.set(target.tabId, { ...target, username, at: Date.now() });
       }
@@ -1221,24 +2092,77 @@
       operations.delete(key);
     }
   }
+  function notifySaveStatus(entry) {
+    publish();
+    if (!entry.manual && entry.status !== "expired") sendToDocument(entry.target, { type: "saveStatus", messageKey: entry.messageKey }).catch(() => {
+    });
+  }
   function setSaveStatus(entry, status, messageKey) {
     entry.status = status;
     entry.messageKey = messageKey;
-    persistSaves().catch(() => {
+    entry.revision = (entry.revision || 0) + 1;
+    const stored = persistSaves();
+    stored.catch(() => {
     });
-    publish();
-    sendToDocument(entry.target, { type: "saveStatus", messageKey }).catch(() => {
-    });
+    notifySaveStatus(entry);
+    return stored;
   }
-  async function persistSaves() {
+  async function persistSaves(getEntries = () => [...pendingSaves.values()].filter((e) => e.status), didStore) {
     try {
-      await saveStore.save([...pendingSaves.values()]);
-      saveStorageError = false;
+      if (!savesRecovered) throw new Error("save queue recovery incomplete");
+      await saveStore.save(getEntries, didStore);
     } catch (error) {
-      saveStorageError = true;
-      throw error;
+      if (error?.errorKey) throw error;
+      throw Object.assign(new Error("save storage failed", { cause: error }), { errorKey: "saveStorageFailed" });
     }
   }
+  function commitSaveChange(entry, patch) {
+    if (entry.commitTask) return entry.commitTask;
+    const { status, revision: revision2 } = entry;
+    function checkCurrent() {
+      if (pendingSaves.get(entry.id) !== entry || entry.status !== status || entry.revision !== revision2 || !stillPending(entry)) {
+        const key = entry.status === "expired" ? entry.messageKey : entry.status === "cancelPending" ? "saveCancelled" : !entry.manual && !pendingSaves.has(entry.id) ? "saveAutomaticOff" : entry.draftTask ? "saveDraftUpdating" : "errorOperation";
+        throw Object.assign(new Error("save request changed"), { errorKey: key });
+      }
+    }
+    entry.commitTask = persistSaves(() => {
+      checkCurrent();
+      return [...pendingSaves.values()].map((e) => e === entry ? { ...e, ...patch } : e).filter((e) => e.status);
+    }, () => {
+      checkCurrent();
+      if (patch.id && patch.id !== entry.id) {
+        pendingSaves.delete(entry.id);
+        pendingSaves.set(patch.id, entry);
+        clearTimeout(entry.timer);
+        entry.timer = setTimeout(() => expireSave(entry), Math.max(0, patch.expiresAt - Date.now()));
+      }
+      Object.assign(entry, patch);
+      notifySaveStatus(entry);
+    }).finally(() => {
+      delete entry.commitTask;
+    });
+    return entry.commitTask;
+  }
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== "local" || !changes.automaticSave) return;
+    savePreferenceVersion++;
+    if (changes.automaticSave.newValue === true) return;
+    let removed = false;
+    for (const entry of pendingSaves.values()) {
+      if (entry.manual || entry.status === "cancelPending") continue;
+      clearTimeout(entry.timer);
+      clearTimeout(entry.retryTimer);
+      entry.password = "";
+      entry.controller?.abort(new Error("automatic saving disabled"));
+      pendingSaves.delete(entry.id);
+      removed = true;
+    }
+    if (removed) {
+      persistSaves().catch(() => {
+      });
+      publish();
+    }
+  });
   function makeRoomForSave() {
     while (pendingSaves.size >= 10) {
       const terminal = [...pendingSaves.values()].find((entry) => !entry.password && entry.status !== "cancelPending");
@@ -1246,6 +2170,12 @@
       clearTimeout(terminal.timer);
       pendingSaves.delete(terminal.id);
     }
+  }
+  function expiryMessage(entry) {
+    return entry.priorDeliveryUnknown || ["saving", "uncertain"].includes(entry.status) ? "saveExpiredUncertain" : "saveExpired";
+  }
+  function expireSave(entry) {
+    discardSecret(entry, "expired", expiryMessage(entry));
   }
   function discardSecret(entry, status, messageKey) {
     clearTimeout(entry.timer);
@@ -1257,7 +2187,7 @@
   function stillPending(entry) {
     if (!entry.password || entry.status === "cancelPending" || entry.status === "cancelled" || entry.status === "expired") return false;
     if (Date.now() >= entry.expiresAt) {
-      discardSecret(entry, "expired", "saveExpired");
+      expireSave(entry);
       return false;
     }
     return true;
@@ -1272,8 +2202,6 @@
     entry.controller = null;
     entry.status = "cancelPending";
     entry.messageKey = "saveCancelling";
-    delete entry.recoveryStatus;
-    delete entry.recoveryMessageKey;
     publish();
     entry.cancelTask = (async () => {
       try {
@@ -1281,7 +2209,7 @@
       } catch {
         entry.messageKey = "saveCancelFailed";
         publish();
-        sendToDocument(entry.target, { type: "saveStatus", messageKey: "saveCancelFailed" }).catch(() => {
+        if (!entry.manual) sendToDocument(entry.target, { type: "saveStatus", messageKey: "saveCancelFailed" }).catch(() => {
         });
         entry.cancelAttempts = (entry.cancelAttempts || 0) + 1;
         entry.cancelRetryTimer = setTimeout(() => {
@@ -1299,29 +2227,79 @@
     });
     return entry.cancelTask;
   }
-  async function queueSave(message, target) {
+  var editableDraft = (entry) => ["review", "blocked", "needsAccount"].includes(entry.status) || entry.status === null && entry.admittingReview;
+  function findDraft(draftId, target) {
+    return typeof draftId === "string" && draftId && [...pendingSaves.values()].find((entry) => !entry.manual && entry.draftId === draftId && entry.target.documentId === target.documentId && entry.target.documentKey === target.documentKey && editableDraft(entry));
+  }
+  async function updateSaveDraft(message, target) {
+    if (!savesRecovered) return { ok: false, errorKey: "saveStorageFailed" };
+    const entry = findDraft(message.draftId, target);
+    if (!entry || !stillPending(entry)) return { ok: false, inactive: true };
+    const c = message.credential;
+    if (c?.password && (typeof c.password !== "string" || typeof c.username !== "string")) throw new Error("invalid draft");
+    const needsAccount = c?.needsAccount || !c?.username;
+    const patch = !c?.password || c.errorKey ? {
+      status: "blocked",
+      messageKey: c?.errorKey === "errorChooseField" ? "errorChooseField" : "errorPasswordConfirmation"
+    } : {
+      password: c.password,
+      username: c.username,
+      status: needsAccount ? "needsAccount" : "review",
+      messageKey: needsAccount ? "saveNoAccount" : "saveReview"
+    };
+    return changeDraft(entry, patch);
+  }
+  async function changeDraft(entry, patch) {
+    const previous = entry.draftTask || entry.commitTask;
+    if (!entry.draftTask && entry.commitTask && entry.status !== null) entry.revision = (entry.revision || 0) + 1;
+    const task = (async () => {
+      if (previous) {
+        try {
+          await previous;
+        } catch (error) {
+          if (entry.status === null) throw error;
+        }
+      }
+      if (pendingSaves.get(entry.id) !== entry || !editableDraft(entry) || !stillPending(entry)) return { ok: false, inactive: true };
+      try {
+        await commitSaveChange(entry, patch);
+      } catch (error) {
+        if (patch.id && error.errorKey === "saveStorageFailed" && pendingSaves.get(entry.id) === entry && editableDraft(entry)) {
+          throw Object.assign(new Error("draft replacement not stored"), { errorKey: "saveReplacementFailed" });
+        }
+        if (error.errorKey === "saveStorageFailed" && pendingSaves.get(entry.id) === entry && editableDraft(entry)) {
+          await setSaveStatus(entry, "blocked", "saveStorageFailed").catch(() => {
+          });
+        }
+        throw error;
+      }
+      return { ok: true };
+    })();
+    entry.draftTask = task;
+    try {
+      return await task;
+    } finally {
+      if (entry.draftTask === task) delete entry.draftTask;
+    }
+  }
+  async function queueSave(message, target, manual = false) {
     if (typeof message.password !== "string" || !message.password || typeof message.username !== "string") throw new Error("invalid save message");
     const reviewError = message.review && ["errorPasswordConfirmation", "errorChooseField"].includes(message.errorKey) ? message.errorKey : null;
     if (message.review && message.errorKey && !reviewError) throw new Error("invalid review error");
     const saveKind = ["login", "new", "change"].includes(message.saveKind) ? message.saveKind : message.newPwCtx ? "new" : "login";
     if (typeof message.submissionId !== "string" || !message.submissionId) throw new Error("invalid submission id");
     const sameDocument = (entry2) => entry2.target.documentId === target.documentId && entry2.target.documentKey === target.documentKey;
-    const existing = [...pendingSaves.values()].find((entry2) => sameDocument(entry2) && entry2.submissionId === message.submissionId);
+    const existing = [...pendingSaves.values()].find((entry2) => sameDocument(entry2) && (entry2.submissionId === message.submissionId || manual && entry2.manual && [null, "review", "needsAccount"].includes(entry2.status) && Date.now() < entry2.expiresAt && entry2.username === message.username && entry2.password === message.password && entry2.saveKind === saveKind));
     if (existing) {
       try {
-        await persistSaves();
+        await (existing.commitTask || persistSaves());
       } catch {
         return { ok: false, errorKey: "saveStorageFailed", saveId: existing.id };
       }
       return { ok: true, saveId: existing.id, status: existing.status };
     }
-    const draft = message.draftId && [...pendingSaves.values()].find((entry2) => sameDocument(entry2) && entry2.draftId === message.draftId && ["review", "blocked", "needsAccount"].includes(entry2.status));
-    if (draft) {
-      clearTimeout(draft.timer);
-      draft.password = "";
-      pendingSaves.delete(draft.id);
-    }
-    makeRoomForSave();
+    const draft = findDraft(message.draftId, target);
+    if (!draft) makeRoomForSave();
     const entry = {
       id: crypto.randomUUID(),
       target,
@@ -1329,28 +2307,48 @@
       username: message.username,
       password: message.password,
       saveKind,
+      manual,
       submissionId: message.submissionId,
       draftId: message.draftId,
       expiresAt: Date.now() + SAVE_TTL,
-      status: "queued",
+      status: null,
+      admittingReview: !!message.review,
       attempts: 0,
       controller: null
     };
-    entry.timer = setTimeout(() => discardSecret(entry, "expired", "saveExpired"), SAVE_TTL);
-    pendingSaves.set(entry.id, entry);
-    const status = reviewError ? "blocked" : message.needsAccount || message.review && !entry.username ? "needsAccount" : message.review ? "review" : "queued";
-    const messageKey = reviewError || (status === "needsAccount" ? "saveNoAccount" : status === "review" ? "saveReview" : client.ready ? "saveQueued" : "saveWaitingUnlock");
-    if (!savesRecovered) {
-      entry.recoveryStatus = status;
-      entry.recoveryMessageKey = messageKey;
-    }
-    setSaveStatus(entry, status, messageKey);
+    const needsAccount = message.needsAccount || message.review && !manual && !entry.username;
+    const status = reviewError ? "blocked" : needsAccount ? "needsAccount" : message.review ? "review" : "queued";
+    const messageKey = reviewError || (status === "needsAccount" ? "saveNoAccount" : status === "review" ? manual ? "saveManualReview" : "saveReview" : client.ready ? "saveQueued" : "saveWaitingUnlock");
     try {
-      await persistSaves();
-    } catch {
-      setSaveStatus(entry, "failed", "saveStorageFailed");
-      return { ok: false, errorKey: "saveStorageFailed", saveId: entry.id };
+      if (draft) {
+        const replaced = await changeDraft(draft, {
+          id: entry.id,
+          username: entry.username,
+          password: entry.password,
+          submissionId: entry.submissionId,
+          expiresAt: entry.expiresAt,
+          saveKind,
+          status,
+          messageKey
+        });
+        if (!replaced.ok) return { ok: false, errorKey: "saveDraftUpdating" };
+      } else {
+        entry.timer = setTimeout(() => expireSave(entry), SAVE_TTL);
+        pendingSaves.set(entry.id, entry);
+        await commitSaveChange(entry, { status, messageKey });
+      }
+    } catch (error) {
+      if (pendingSaves.get(entry.id) === entry && entry.status === null) {
+        if (message.review) {
+          clearTimeout(entry.timer);
+          entry.password = "";
+          pendingSaves.delete(entry.id);
+          publish();
+        } else setSaveStatus(entry, "failed", "saveStorageFailed");
+      }
+      return { ok: false, errorKey: error.errorKey || "saveStorageFailed", saveId: entry.id };
     }
+    if (pendingSaves.get(entry.id) !== (draft || entry)) return { ok: false, errorKey: draft ? "saveDraftUpdating" : "saveAutomaticOff" };
     if (!message.review && !client.ready && chrome.action?.openPopup) {
       try {
         Promise.resolve(chrome.action.openPopup()).catch(() => {
@@ -1359,7 +2357,7 @@
       }
     }
     queueMicrotask(flushPendingSaves);
-    return { ok: true, saveId: entry.id, status: entry.status };
+    return { ok: true, saveId: entry.id, status: (draft || entry).status };
   }
   async function flushPendingSaves() {
     if (!await recoverPendingSaves()) return;
@@ -1391,8 +2389,7 @@
           }
           entry.controller = new AbortController();
           entry.attempts++;
-          setSaveStatus(entry, "saving", "saveSending");
-          await persistSaves();
+          await setSaveStatus(entry, "saving", "saveSending");
           if (!stillPending(entry)) continue;
           await client.saveLogin(
             entry.target.tabId,
@@ -1413,7 +2410,7 @@
           entry.controller = null;
           console.warn("[FAPassword] deferred save failed");
           if (error.mayHaveBeenSent) setSaveStatus(entry, "uncertain", "saveUncertain");
-          else if (saveStorageError) setSaveStatus(entry, "failed", "saveStorageFailed");
+          else if (error.errorKey === "saveStorageFailed") setSaveStatus(entry, "failed", "saveStorageFailed");
           else {
             setSaveStatus(entry, "failed", "saveFailed");
             if (entry.attempts < 3) entry.retryTimer = setTimeout(() => {
@@ -1433,16 +2430,17 @@
     if (savesRecovered) return Promise.resolve(true);
     if (saveRecoveryAttempt) return saveRecoveryAttempt;
     saveRecoveryAttempt = (async () => {
-      let recovered;
+      let recovered, automatic;
       try {
         recovered = await saveStore.load();
+        automatic = recovered.some((saved) => saved?.manual !== true) && await readAutomaticSaveSetting();
       } catch {
-        saveStorageError = true;
         saveRecoveryError = "saveStorageFailed";
         publish();
         return false;
       }
       for (const saved of recovered) {
+        if (saved?.manual !== true && !automatic) continue;
         if (typeof saved?.id !== "string" || typeof saved.username !== "string" || typeof saved.password !== "string" || !saved.target || !usablePage(saved.target.frameUrl) || !Number.isFinite(saved.expiresAt)) continue;
         const local = pendingSaves.get(saved.id) || [...pendingSaves.values()].find((entry2) => entry2.target.documentId === saved.target.documentId && entry2.target.documentKey === saved.target.documentKey && entry2.submissionId === saved.submissionId);
         if (local) {
@@ -1459,9 +2457,9 @@
           entry.status = "cancelPending";
           entry.messageKey = "saveCancelling";
         } else if (entry.password && Date.now() >= entry.expiresAt) {
+          entry.messageKey = expiryMessage(entry);
           entry.password = "";
           entry.status = "expired";
-          entry.messageKey = "saveExpired";
         } else if (entry.status === "saving") {
           entry.status = "uncertain";
           entry.messageKey = "saveUncertain";
@@ -1469,20 +2467,11 @@
           entry.status = entry.username ? "review" : "needsAccount";
           entry.messageKey = entry.username ? "saveRecoveredReview" : "saveNoAccount";
         }
-        if (entry.password) entry.timer = setTimeout(() => discardSecret(entry, "expired", "saveExpired"), entry.expiresAt - Date.now());
+        if (entry.password) entry.timer = setTimeout(() => expireSave(entry), entry.expiresAt - Date.now());
         pendingSaves.set(entry.id, entry);
       }
       savesRecovered = true;
       saveRecoveryError = null;
-      for (const entry of pendingSaves.values()) {
-        if (!entry.recoveryStatus) continue;
-        if (stillPending(entry)) {
-          entry.status = entry.recoveryStatus;
-          entry.messageKey = entry.recoveryMessageKey || (entry.status === "needsAccount" ? "saveNoAccount" : entry.status === "review" ? "saveReview" : client.ready ? "saveQueued" : "saveWaitingUnlock");
-        }
-        delete entry.recoveryStatus;
-        delete entry.recoveryMessageKey;
-      }
       await persistSaves().catch(() => {
       });
       publish();
@@ -1514,6 +2503,16 @@
           if (current && current.documentId !== target.documentId) throw new Error("stale document");
           rememberFrame(target);
         }
+        if (["resolveSave", "updateSaveDraft", "saveNotice"].includes(message.type)) {
+          if (!fromContent) return respond({ ok: false, errorKey: "saveAutomaticOff" });
+          let automatic;
+          try {
+            automatic = await readAutomaticSaveSetting();
+          } catch {
+            return respond({ ok: false, errorKey: "saveStorageFailed" });
+          }
+          if (!automatic) return respond({ ok: false, errorKey: "saveAutomaticOff" });
+        }
         switch (message.type) {
           case "getPasswordsLauncher":
           case "openPasswords":
@@ -1541,29 +2540,33 @@
             if (!client.ready) return respond(client.state === State.NeedsPin ? { ok: true, locked: true, logins: [] } : { ok: false, errorKey: lastConnectionError || "errorConnection" });
             return respond({ ok: true, locked: false, logins: orderLogins(target.origin, await getLoginNames(target.tabId, target.frameUrl, target.frameId)) });
           case "inlineFill":
-            return respond(await performFill(target, message.loginName?.username, message.requestId));
+            return respond(await performFill(target, message.loginName?.username, message));
           case "cancelFill":
             operations.get(operationKey(target.documentId, message.requestId))?.abort(new Error("fill cancelled"));
             return respond({ ok: true });
           case "resolveSave":
             return respond(await queueSave(message, target));
-          case "updateSaveDraft": {
-            const entry = [...pendingSaves.values()].find((entry2) => entry2.draftId === message.draftId && entry2.target.documentId === target.documentId && entry2.target.documentKey === target.documentKey && ["review", "blocked", "needsAccount"].includes(entry2.status));
-            if (!entry || !stillPending(entry)) return respond({ ok: true });
-            const credential = message.credential;
-            if (!credential || credential.errorKey || !credential.password) {
-              setSaveStatus(entry, "blocked", credential?.errorKey === "errorChooseField" ? "errorChooseField" : "errorPasswordConfirmation");
-            } else {
-              if (typeof credential.password !== "string" || typeof credential.username !== "string") throw new Error("invalid draft");
-              entry.password = credential.password;
-              entry.username = credential.username;
-              setSaveStatus(entry, credential.needsAccount || !entry.username ? "needsAccount" : "review", credential.needsAccount || !entry.username ? "saveNoAccount" : "saveReview");
+          case "reviewPagePassword": {
+            if (!savesRecovered) return respond({ ok: false, errorKey: "saveStorageFailed" });
+            const tab = await activeTab();
+            const context = usablePage(tab?.url);
+            if (tab?.id == null || !context) return respond({ ok: false, errorKey: unavailablePageKey(tab?.url) });
+            const frame = await focusedFrame(tab, context);
+            if (!frame) return respond({ ok: false, errorKey: "pageUnavailable" });
+            const result = await sendToDocument(frame, { type: "readPagePassword" });
+            if (!result?.ok) return respond({ ok: false, errorKey: result?.errorKey || "saveNoPasswordOnPage" });
+            const description = await sendToDocument(frame, { type: "describeFrame" });
+            const current = await activeTab();
+            if (current?.id !== tab.id || current.url !== tab.url || !description?.ok || description.documentKey !== frame.documentKey) {
+              return respond({ ok: false, errorKey: "errorPageChanged" });
             }
-            await persistSaves();
-            return respond({ ok: true });
+            const queued = await queueSave({ ...result.credential, review: true, submissionId: crypto.randomUUID() }, frame, true);
+            return respond({ ...queued, saves: publicSaves() });
           }
+          case "updateSaveDraft":
+            return respond(await updateSaveDraft(message, target));
           case "saveNotice": {
-            const allowed = ["errorChooseField", "errorPasswordConfirmation", "saveFailed", "saveStorageFailed", "saveQueueFull", "errorConnection"];
+            const allowed = ["errorChooseField", "errorPasswordConfirmation", "saveFailed", "saveStorageFailed", "saveReplacementFailed", "saveQueueFull", "errorConnection"];
             if (!allowed.includes(message.messageKey)) throw new Error("invalid save notice");
             const previous = [...pendingSaves.values()].find((entry2) => entry2.target.documentId === target.documentId && entry2.submissionId === message.submissionId);
             if (previous) return respond({ ok: true });
@@ -1624,13 +2627,8 @@
           case "getLogins": {
             const tab = await activeTab();
             const context = usablePage(tab?.url);
-            if (!tab?.id || !context) return respond({ ok: false, errorKey: "pageUnavailable" });
-            let frame = lastFocusByTab.get(tab?.id);
-            if (frame && frame.topOrigin === context.origin) {
-              const description = await sendToDocument(frame, { type: "describeFrame" }).catch(() => null);
-              if (!description?.ok) frame = null;
-            } else frame = null;
-            frame ||= await captureTopTarget(tab).catch(() => null);
+            if (!tab?.id || !context) return respond({ ok: false, errorKey: unavailablePageKey(tab?.url) });
+            const frame = await focusedFrame(tab, context);
             const url = frame?.frameUrl || tab.url;
             const origin = frame?.origin || context.origin;
             const logins = orderLogins(origin, await getLoginNames(tab.id, url, frame?.frameId || 0));
@@ -1638,19 +2636,21 @@
             if (currentTab?.id !== tab.id || pageContext(currentTab.url)?.origin !== context.origin) {
               return respond({ ok: false, errorKey: "pageUnavailable" });
             }
+            const previous = lastFillByTab.get(tab.id);
+            const canRefill = frame && previous && previous.topOrigin === context.origin && previous.frameId === frame.frameId && previous.documentId === frame.documentId && previous.documentKey === frame.documentKey;
             return respond({
               ok: true,
               logins,
               targetId: frame ? ticketFor(frame) : null,
               host: new URL(url).hostname,
-              refill: lastFillByTab.get(tab.id) ? { username: lastFillByTab.get(tab.id).username, host: new URL(lastFillByTab.get(tab.id).frameUrl).hostname } : null
+              refill: canRefill ? { username: previous.username, host: new URL(previous.frameUrl).hostname } : null
             });
           }
           case "fillOnPage": {
             const frame = await validateUiTarget(message.targetId);
             const preparation = await sendToDocument(frame, { type: "prepareFill" });
             if (!preparation?.ok) return respond(preparation || { ok: false, errorKey: "errorPageChanged" });
-            return respond(await performFill(frame, message.loginName?.username, preparation.requestId));
+            return respond(await performFill(frame, message.loginName?.username, preparation));
           }
           case "refreshLogins":
             clearCaches();
@@ -1661,19 +2661,35 @@
             if (!previous || previous.topOrigin !== pageContext(tab?.url)?.origin) throw new Error("stale page target");
             const preparation = await sendToDocument(previous, { type: "prepareFill" });
             if (!preparation?.ok) return respond(preparation || { ok: false, errorKey: "errorPageChanged" });
-            clearCaches();
-            return respond(await performFill(previous, previous.username, preparation.requestId));
+            if (preparation.stage === "password") clearCaches();
+            return respond(await performFill(previous, previous.username, preparation));
           }
           case "retrySave": {
             const entry = pendingSaves.get(message.saveId);
             if (!entry || !stillPending(entry) || entry.status === "saving" || entry.status === "blocked" || entry.status === "cancelPending") throw new Error("save expired");
-            if (entry.status === "needsAccount") {
-              if (typeof message.username !== "string" || !message.username.trim()) throw new Error("no account selected");
-              entry.username = message.username;
+            if (entry.draftTask) return respond({ ok: false, errorKey: "saveDraftUpdating", saves: publicSaves() });
+            if (entry.status === null) throw new Error("save not admitted");
+            let username = entry.username;
+            if (entry.status === "needsAccount" || entry.manual && entry.status === "review") {
+              username = typeof message.username === "string" ? message.username : entry.username;
+              if (!username.trim() && (entry.status === "needsAccount" || !client.capabilities?.canSaveAccountWithEmptyUserName)) {
+                return respond({ ok: false, errorKey: "saveAccountRequired" });
+              }
+              if (!username.trim()) username = "";
             }
             clearTimeout(entry.retryTimer);
-            setSaveStatus(entry, "queued", "saveQueued");
-            await persistSaves();
+            if (entry.status !== "queued") {
+              try {
+                await commitSaveChange(entry, {
+                  username,
+                  status: "queued",
+                  messageKey: "saveQueued",
+                  priorDeliveryUnknown: entry.status === "uncertain" || !!entry.priorDeliveryUnknown
+                });
+              } catch (error) {
+                return respond({ ok: false, errorKey: error.errorKey || "saveStorageFailed", saves: publicSaves() });
+              }
+            }
             queueMicrotask(flushPendingSaves);
             return respond({ ok: true, saves: publicSaves() });
           }

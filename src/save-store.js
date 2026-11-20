@@ -20,16 +20,20 @@ export function createSaveStore(storage) {
       })().finally(() => { loading = null; });
       return loading;
     },
-    save(entries) {
-      if (!storage) return Promise.resolve();
+    save(getEntries, didStore) {
+      if (!storage) return Promise.reject(new Error("save store unavailable"));
       // A failed recovery read must not be followed by overwriting unknown
       // pending passwords with a new, incomplete in-worker queue.
       if (!loaded) return Promise.reject(new Error("save store recovery unavailable"));
-      // Snapshot immediately; never let a later mutation change an earlier write.
-      const snapshot = entries.map(({ id, target, host, username, password, saveKind, submissionId,
-        draftId, expiresAt, status, attempts, messageKey, completedAt }) => ({ id, target, host,
-        username, password, saveKind, submissionId, draftId, expiresAt, status, attempts, messageKey, completedAt }));
-      const write = tail.catch(() => {}).then(() => storage.set({ [key]: snapshot }));
+      // Build each snapshot after the preceding write has committed (or failed).
+      // A concurrent write must neither include a rejected change nor undo a successful one.
+      const write = tail.catch(() => {}).then(async () => {
+        const snapshot = getEntries().map(({ id, target, host, username, password, saveKind, submissionId,
+          draftId, expiresAt, status, attempts, messageKey, completedAt, manual, priorDeliveryUnknown }) => ({ id, target, host,
+          username, password, saveKind, submissionId, draftId, expiresAt, status, attempts, messageKey, completedAt, manual, priorDeliveryUnknown }));
+        await storage.set({ [key]: snapshot });
+        didStore?.();
+      });
       tail = write;
       return write;
     },
