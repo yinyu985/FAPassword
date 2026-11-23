@@ -12,6 +12,10 @@
   A Chromium extension that talks to Apple Passwords (iCloud Keychain) on macOS and autofills your logins, without the official extension's headaches.
 </p>
 
+<p align="center">
+  <a href="https://fapassword.pages.dev">Website</a> · <a href="https://github.com/yinyu985/FAPassword#install">Install</a>
+</p>
+
 ---
 
 Apple's official iCloud Passwords extension for Chrome sits at 2.3 out of 5 across ~2,600 ratings. It forgets your session and re-asks for the 6-digit code every few hours, throws an "Enable AutoFill" balloon on top of one-time-code boxes, and fights Chrome's own password manager. This is a replacement client.

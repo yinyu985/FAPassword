@@ -12,6 +12,10 @@
   一个 Chromium 扩展，在 macOS 上与 Apple Passwords（iCloud 钥匙串）通信并自动填充登录信息，避免官方扩展带来的种种麻烦。
 </p>
 
+<p align="center">
+  <a href="https://fapassword.pages.dev">官网</a> · <a href="https://github.com/yinyu985/FAPassword#安装">安装</a>
+</p>
+
 ---
 
 Apple 官方 iCloud Passwords 扩展在 Chrome 上只有 2.3/5 分（约 2,600 条评价）。它会忘记会话、每隔几小时就重新索要六位验证码，在一次性验证码输入框上弹出 "Enable AutoFill" 气泡，还和 Chrome 自带的密码管理器打架。这是一个替代客户端。

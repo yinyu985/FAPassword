@@ -1,0 +1,7 @@
+{
+  // Cloudflare Pages project for the landing page.
+  // Git integration reads this file: no build command, static output only.
+  "name": "fapassword",
+  "compatibility_date": "2026-11-20",
+  "pages_build_output_dir": "./site"
+}

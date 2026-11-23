@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="在 macOS 的 Chromium 浏览器中使用 Apple 密码。FAPassword 是一个开源自动填充扩展。">
+<title>FAPassword — 在浏览器里用 Apple 密码</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="shell mast"><a class="brand" href="./"><img src="assets/icon.png" alt="" width="34" height="34"> FAPassword</a><nav aria-label="页面导航"><a href="#install">安装</a><a href="https://github.com/yinyu985/FAPassword">GitHub ↗</a></nav></header>
+<main>
+  <section class="shell hero">
+    <div class="intro">
+      <p class="label"><span class="status"></span> macOS / CHROMIUM EXTENSION</p>
+      <h1>用 Apple 密码。<br>不用换浏览器。</h1>
+      <p class="lead">在 Chrome、Edge 或 Brave 里，直接填入 iCloud 钥匙串已有的登录信息。不必再维护一份密码。</p>
+      <a class="button" href="#install">查看安装方式 <span aria-hidden="true">↓</span></a>
+      <p class="label platform">macOS 14+ <span>·</span> 开源 <span>·</span> 手动安装</p>
+    </div>
+    <figure class="product">
+      <div class="plate"><img src="assets/popup.jpeg" width="700" height="1188" alt="FAPassword 扩展实拍：工具栏弹窗显示当前站点的账号、填充按钮、密码生成器与设置。" fetchpriority="high"></div>
+      <figcaption><span>扩展实拍</span><span>工具栏弹窗 · 账号与设置</span></figcaption>
+    </figure>
+  </section>
+  <section class="shell notes" aria-labelledby="daily">
+    <h2 id="daily">从选账号，<br>到填好密码。</h2>
+    <dl>
+      <div><dt>在登录框或工具栏选账号</dt><dd>扩展按当前站点列出已保存的登录信息。它会避开已识别的一次性验证码字段。</dd></div>
+      <div><dt>六位验证码可以整段粘贴</dt><dd>空格、换行和全角数字都会自动处理。同一次浏览器运行通常只需验证一次；退出或断连后需要重新验证。</dd></div>
+      <div><dt>仍由 macOS 授权</dt><dd>读取密码时，系统仍可能要求 Touch ID 或登录密码。会话密钥只留在内存，不写入磁盘。</dd></div>
+    </dl>
+  </section>
+  <section class="shell install" id="install">
+    <div><p class="label">GET STARTED</p><h2>从 GitHub 手动安装</h2><p>它不在 Chrome Web Store。需要启用 iCloud 密码，并先关闭 Apple 官方 iCloud Passwords 扩展。浏览器兼容性取决于 macOS 与浏览器版本。</p></div>
+    <a class="button" href="https://github.com/yinyu985/FAPassword#install">打开安装指南 <span aria-hidden="true">↗</span></a>
+  </section>
+</main>
+<footer class="shell foot"><span>FAPassword · 与 Apple 无关联</span><a href="https://github.com/yinyu985/FAPassword/issues">反馈问题 ↗</a></footer>
+</body>
+</html>
